@@ -78,6 +78,7 @@ const App: React.FC = () => {
   const [textFilter, setTextFilter] = useState<string>('');
   const [dateFilter, setDateFilter] = useState<DateFilter>({ operator: 'exact', date1: '', date2: '' });
   const [createdDateFilter, setCreatedDateFilter] = useState<DateFilter>({ operator: 'exact', date1: '', date2: '' });
+  const [uploadStatusFilter, setUploadStatusFilter] = useState<'all' | 'complete' | 'partial' | 'none'>('all');
   
   const debouncedTextFilter = useDebounce(textFilter, 300);
   
@@ -299,6 +300,39 @@ const App: React.FC = () => {
       }
     }
 
+    // Filter by upload status
+    if (uploadStatusFilter !== 'all') {
+      filteredItems = filteredItems.filter(record => {
+        const recordFiles = allManagedFiles[record.id] || { [DocType.PO]: [], [DocType.SO]: [], [DocType.SupplierInvoice]: [], [DocType.CustomerInvoice]: [] };
+        
+        // Count uploaded files for this record
+        let uploadedCount = 0;
+        if (appSettings.storageMode === 'local' && localStorageServiceRef.current) {
+          const batchNumber = record['Batch number'];
+          if (batchNumber) {
+            uploadedCount = Object.values(DocType).reduce((sum, docType) => {
+              return sum + localStorageServiceRef.current!.getUploadedFileCount(batchNumber, docType);
+            }, 0);
+          }
+        } else {
+          uploadedCount = (Object.values(recordFiles) as ManagedFile[][]).reduce((sum: number, files) => sum + files.length, 0);
+        }
+
+        const totalRequired = 4; // PO, SO, Supplier Invoice, Customer Invoice
+        
+        switch (uploadStatusFilter) {
+          case 'complete':
+            return uploadedCount >= totalRequired;
+          case 'partial':
+            return uploadedCount > 0 && uploadedCount < totalRequired;
+          case 'none':
+            return uploadedCount === 0;
+          default:
+            return true;
+        }
+      });
+    }
+
     if (sortConfig.key !== null) {
       const key = sortConfig.key as keyof FscRecord;
       filteredItems.sort((a, b) => {
@@ -324,7 +358,7 @@ const App: React.FC = () => {
       });
     }
     return filteredItems;
-  }, [data, debouncedTextFilter, dateFilter, createdDateFilter, sortConfig]);
+  }, [data, debouncedTextFilter, dateFilter, createdDateFilter, sortConfig, uploadStatusFilter, allManagedFiles, appSettings.storageMode]);
 
   const requestSort = (key: keyof FscRecord) => {
     let direction: 'ascending' | 'descending' = 'ascending';
@@ -386,6 +420,41 @@ const App: React.FC = () => {
     },
   };
 
+  // Calculate statistics for filtered data
+  const dataStats = useMemo(() => {
+    const total = processedData.length;
+    let completeCount = 0;
+    let partialCount = 0;
+    let noneCount = 0;
+
+    processedData.forEach(record => {
+      const recordFiles = allManagedFiles[record.id] || { [DocType.PO]: [], [DocType.SO]: [], [DocType.SupplierInvoice]: [], [DocType.CustomerInvoice]: [] };
+      
+      let uploadedCount = 0;
+      if (appSettings.storageMode === 'local' && localStorageServiceRef.current) {
+        const batchNumber = record['Batch number'];
+        if (batchNumber) {
+          uploadedCount = Object.values(DocType).reduce((sum, docType) => {
+            return sum + localStorageServiceRef.current!.getUploadedFileCount(batchNumber, docType);
+          }, 0);
+        }
+      } else {
+        uploadedCount = (Object.values(recordFiles) as ManagedFile[][]).reduce((sum: number, files) => sum + files.length, 0);
+      }
+
+      const totalRequired = 4; // PO, SO, Supplier Invoice, Customer Invoice
+      
+      if (uploadedCount >= totalRequired) {
+        completeCount++;
+      } else if (uploadedCount > 0) {
+        partialCount++;
+      } else {
+        noneCount++;
+      }
+    });
+
+    return { total, completeCount, partialCount, noneCount };
+  }, [processedData, allManagedFiles, appSettings.storageMode]);
 
   return (
     <div className="min-h-screen text-gray-800 transition-colors duration-300">
@@ -417,7 +486,38 @@ const App: React.FC = () => {
               setDateFilter={setDateFilter}
               createdDateFilter={createdDateFilter}
               setCreatedDateFilter={setCreatedDateFilter}
+              uploadStatusFilter={uploadStatusFilter}
+              setUploadStatusFilter={setUploadStatusFilter}
             />
+            
+            {/* Stats Summary */}
+            {!isLoading && !error && data.length > 0 && (
+              <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-gray-900">{dataStats.total}</div>
+                    <div className="text-xs text-gray-600 uppercase tracking-wide">Total Records</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-green-600">{dataStats.completeCount}</div>
+                    <div className="text-xs text-gray-600 uppercase tracking-wide">Fully Completed</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-yellow-600">{dataStats.partialCount}</div>
+                    <div className="text-xs text-gray-600 uppercase tracking-wide">Partially Uploaded</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-red-600">{dataStats.noneCount}</div>
+                    <div className="text-xs text-gray-600 uppercase tracking-wide">Not Started</div>
+                  </div>
+                </div>
+                <div className="mt-3 text-center text-xs text-gray-500">
+                  {dataStats.completeCount > 0 && (
+                    <span>{Math.round((dataStats.completeCount / dataStats.total) * 100)}% completion rate</span>
+                  )}
+                </div>
+              </div>
+            )}
             
             {isLoading ? (
               <div className="flex justify-center items-center h-64">

@@ -8,6 +8,8 @@ interface FilterControlsProps {
     setDateFilter: (value: DateFilter) => void;
     createdDateFilter: DateFilter;
     setCreatedDateFilter: (value: DateFilter) => void;
+    uploadStatusFilter: 'all' | 'complete' | 'partial' | 'none';
+    setUploadStatusFilter: (value: 'all' | 'complete' | 'partial' | 'none') => void;
 }
 
 export const FilterControls: React.FC<FilterControlsProps> = ({ 
@@ -16,7 +18,9 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
     dateFilter, 
     setDateFilter,
     createdDateFilter,
-    setCreatedDateFilter
+    setCreatedDateFilter,
+    uploadStatusFilter,
+    setUploadStatusFilter
 }) => {
     const handleOperatorChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         setDateFilter({
@@ -52,6 +56,7 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
         setTextFilter('');
         setDateFilter({ operator: 'exact', date1: '', date2: '' });
         setCreatedDateFilter({ operator: 'exact', date1: '', date2: '' });
+        setUploadStatusFilter('all');
     };
 
     return (
@@ -70,6 +75,55 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
                         onChange={(e) => setTextFilter(e.target.value)}
                         className="mt-1 w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                     />
+                </div>
+                
+                {/* Upload Status Filter */}
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Upload Status
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                        <button
+                            onClick={() => setUploadStatusFilter('all')}
+                            className={`px-4 py-2 rounded-lg font-medium transition ${
+                                uploadStatusFilter === 'all'
+                                    ? 'bg-blue-600 text-white'
+                                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                            }`}
+                        >
+                            All
+                        </button>
+                        <button
+                            onClick={() => setUploadStatusFilter('complete')}
+                            className={`px-4 py-2 rounded-lg font-medium transition ${
+                                uploadStatusFilter === 'complete'
+                                    ? 'bg-green-600 text-white'
+                                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                            }`}
+                        >
+                            ✓ Fully Completed
+                        </button>
+                        <button
+                            onClick={() => setUploadStatusFilter('partial')}
+                            className={`px-4 py-2 rounded-lg font-medium transition ${
+                                uploadStatusFilter === 'partial'
+                                    ? 'bg-yellow-600 text-white'
+                                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                            }`}
+                        >
+                            ⚠ Partially Uploaded
+                        </button>
+                        <button
+                            onClick={() => setUploadStatusFilter('none')}
+                            className={`px-4 py-2 rounded-lg font-medium transition ${
+                                uploadStatusFilter === 'none'
+                                    ? 'bg-red-600 text-white'
+                                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                            }`}
+                        >
+                            ✗ Not Started
+                        </button>
+                    </div>
                 </div>
                 
                 {/* FSC Approval Date Filter */}

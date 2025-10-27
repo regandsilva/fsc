@@ -168,6 +168,81 @@ export const DataTable: React.FC<DataTableProps> = ({
   appSettings,
   localStorageService
 }) => {
+  const [columnOrder, setColumnOrder] = useState<(keyof FscRecord)[]>([
+    'Batch number',
+    'PO REF',
+    'SO',
+    'FSC Approval Date',
+    'Created',
+    'FSC Status',
+    'FSC Case Number',
+    'PRODUCT NAME (MAX 35 CHARACTERS)'
+  ]);
+  const [draggedColumn, setDraggedColumn] = useState<keyof FscRecord | null>(null);
+  const [dragOverColumn, setDragOverColumn] = useState<keyof FscRecord | null>(null);
+
+  // Load column order from localStorage on mount
+  React.useEffect(() => {
+    const saved = localStorage.getItem('fsc-column-order');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setColumnOrder(parsed);
+        }
+      } catch (e) {
+        console.warn('Failed to load column order');
+      }
+    }
+  }, []);
+
+  // Save column order to localStorage whenever it changes
+  React.useEffect(() => {
+    localStorage.setItem('fsc-column-order', JSON.stringify(columnOrder));
+  }, [columnOrder]);
+
+  const handleDragStart = (e: React.DragEvent, column: keyof FscRecord) => {
+    setDraggedColumn(column);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent, column: keyof FscRecord) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverColumn(column);
+  };
+
+  const handleDragLeave = () => {
+    setDragOverColumn(null);
+  };
+
+  const handleDrop = (e: React.DragEvent, targetColumn: keyof FscRecord) => {
+    e.preventDefault();
+    
+    if (!draggedColumn || draggedColumn === targetColumn) {
+      setDraggedColumn(null);
+      setDragOverColumn(null);
+      return;
+    }
+
+    const newOrder = [...columnOrder];
+    const draggedIdx = newOrder.indexOf(draggedColumn);
+    const targetIdx = newOrder.indexOf(targetColumn);
+
+    // Remove from old position and insert at new position
+    newOrder.splice(draggedIdx, 1);
+    newOrder.splice(targetIdx, 0, draggedColumn);
+
+    setColumnOrder(newOrder);
+    setDraggedColumn(null);
+    setDragOverColumn(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedColumn(null);
+    setDragOverColumn(null);
+  };
+
   if (data.length === 0) {
     return (
       <div className="text-center py-16">
@@ -177,16 +252,7 @@ export const DataTable: React.FC<DataTableProps> = ({
     );
   }
   
-  const displayHeaders: (keyof FscRecord)[] = [
-    'Batch number',
-    'PO REF',
-    'SO',
-    'FSC Approval Date',
-    'Created',
-    'FSC Status',
-    'FSC Case Number',
-    'PRODUCT NAME (MAX 35 CHARACTERS)'
-  ];
+  const displayHeaders = columnOrder;
 
   const getSortIcon = (key: keyof FscRecord) => {
     if (sortConfig.key !== key) {
@@ -237,8 +303,23 @@ export const DataTable: React.FC<DataTableProps> = ({
         <thead className="bg-gray-50">
           <tr>
             {displayHeaders.map(header => (
-              <th key={header} scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                <button className="flex items-center group" onClick={() => requestSort(header)}>
+              <th 
+                key={header} 
+                scope="col" 
+                className={`px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-move select-none transition-colors ${
+                  dragOverColumn === header ? 'bg-blue-100' : ''
+                } ${
+                  draggedColumn === header ? 'opacity-50' : ''
+                }`}
+                draggable
+                onDragStart={(e) => handleDragStart(e, header)}
+                onDragOver={(e) => handleDragOver(e, header)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, header)}
+                onDragEnd={handleDragEnd}
+              >
+                <button className="flex items-center group w-full" onClick={() => requestSort(header)}>
+                  <span className="mr-1">⋮⋮</span>
                   <span>{header}</span>
                   {getSortIcon(header)}
                 </button>
