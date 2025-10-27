@@ -1,4 +1,5 @@
 import React from 'react';
+import { saveDirectoryHandle } from '../utils/dirHandleStore';
 import { AppSettings, AuthState } from '../types';
 import { X, LogIn, LogOut, RotateCw } from './Icons';
 
@@ -15,6 +16,8 @@ interface SettingsPanelProps {
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, settings, setSettings, onFetchData, onClose, authState, onLogin, onLogout }) => {
   const isElectron = typeof window !== 'undefined' && (window as any).electron?.isElectron;
+  const canUseWebFS = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+  const canUseLocalFolder = isElectron || canUseWebFS;
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setSettings(prev => ({ ...prev, [name]: value }));
@@ -29,6 +32,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, settings, 
       const folderPath = await (window as any).electron.selectFolder();
       if (folderPath) {
         setSettings(prev => ({ ...prev, localStoragePath: folderPath }));
+      }
+      return;
+    }
+    if (canUseWebFS) {
+      try {
+        const handle: FileSystemDirectoryHandle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
+        // Request permission if available
+        // @ts-ignore
+        await (handle as any).requestPermission?.({ mode: 'readwrite' });
+        await saveDirectoryHandle(handle);
+        setSettings(prev => ({ ...prev, localStoragePath: handle.name }));
+      } catch (e) {
+        console.warn('Folder selection canceled or failed', e);
       }
     }
   };
@@ -93,9 +109,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, settings, 
                       checked={settings.storageMode === 'local'}
                       onChange={(e) => setSettings(prev => ({ ...prev, storageMode: e.target.value as 'onedrive' | 'local' }))}
                       className="h-4 w-4 text-blue-600 focus:ring-blue-500"
-                      disabled={!isElectron}
+                      disabled={!canUseLocalFolder}
                     />
-                    <span className={`text-sm ${!isElectron ? 'text-gray-400' : 'text-gray-700'}`}>Local PC Folder{!isElectron ? ' (Electron only)' : ''}</span>
+                    <span className={`text-sm ${!canUseLocalFolder ? 'text-gray-400' : 'text-gray-700'}`}>
+                      Local PC Folder{!canUseLocalFolder ? ' (Not supported in this browser)' : ''}
+                    </span>
                   </label>
                 </div>
                 <p className="mt-2 text-xs text-gray-500">
@@ -124,8 +142,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, settings, 
                     </button>
                   </div>
                   <p className="mt-1 text-xs text-gray-500">
-                    Folders will be created automatically: {'{'}BasePath{'}'}/{'{'}BatchNumber{'}'}/{'{'}DocType{'}'}
+                    Folders will be created automatically in the selected folder: {'{'}BatchNumber{'}'}/{'{'}DocType{'}'}
                   </p>
+                  {!canUseLocalFolder && (
+                    <p className="mt-1 text-xs text-red-600">
+                      Your browser doesn't support selecting a local folder. Try a Chromium-based browser (Chrome/Edge) or use the desktop app.
+                    </p>
+                  )}
                 </div>
               )}
             </div>

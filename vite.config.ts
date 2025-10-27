@@ -5,7 +5,9 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
-      base: './', // Important for Electron to resolve paths correctly
+      // Use an absolute base so assets resolve even if the URL lacks a trailing slash on GitHub Pages
+      // e.g., https://regandsilva.github.io/fsc-document-hub/
+      base: '/fsc-document-hub/',
       server: {
         port: 3000,
         host: '0.0.0.0',

@@ -1,4 +1,5 @@
 import { FscRecord, DocType } from '../types';
+import { getDirectoryHandle } from '../utils/dirHandleStore';
 
 export interface UploadedFileRecord {
   batchNumber: string;
@@ -16,6 +17,7 @@ export interface UploadedFileRecord {
 export class LocalStorageService {
   private uploadHistory: Map<string, UploadedFileRecord> = new Map();
   private basePath: string = '';
+  private dirHandle: FileSystemDirectoryHandle | null = null;
 
   constructor() {
     // History will be loaded when uploadFile is called with basePath
@@ -29,7 +31,6 @@ export class LocalStorageService {
       try {
         const historyFile = `${basePath.replace(/\\/g, '/')}/.upload-history.json`;
         console.log('📖 Loading upload history from:', historyFile);
-        
         const content = await (window as any).electron.readFile(historyFile);
         if (content) {
           const history = JSON.parse(content);
@@ -44,6 +45,25 @@ export class LocalStorageService {
       } catch (error) {
         console.log('ℹ️ No existing upload history found (this is normal for first run)');
       }
+      return;
+    }
+    // Web: File System Access API
+    if (this.dirHandle) {
+      try {
+        const fileHandle = await this.dirHandle.getFileHandle('.upload-history.json');
+        const file = await fileHandle.getFile();
+        const content = await file.text();
+        const history: UploadedFileRecord[] = JSON.parse(content);
+        if (Array.isArray(history)) {
+          this.uploadHistory = new Map(history.map((item: UploadedFileRecord) => [
+            this.getFileKey(item.batchNumber, item.docType, item.fileName),
+            item
+          ]));
+          console.log(`✅ Loaded ${history.length} upload records from history (web)`);
+        }
+      } catch (_err) {
+        console.log('ℹ️ No existing upload history found in web folder');
+      }
     }
   }
 
@@ -51,17 +71,29 @@ export class LocalStorageService {
    * Save upload history to .upload-history.json in the base folder
    */
   private async saveUploadHistory(basePath: string): Promise<void> {
+    const history = Array.from(this.uploadHistory.values());
+    const content = JSON.stringify(history, null, 2);
     if (typeof window !== 'undefined' && (window as any).electron) {
       try {
-        const history = Array.from(this.uploadHistory.values());
         const historyFile = `${basePath.replace(/\\/g, '/')}/.upload-history.json`;
-        const content = JSON.stringify(history, null, 2);
-        
         console.log('💾 Saving upload history to:', historyFile);
         await (window as any).electron.writeFile(historyFile, content);
         console.log(`✅ Saved ${history.length} upload records`);
       } catch (error) {
         console.error('Failed to save upload history:', error);
+      }
+      return;
+    }
+    // Web write
+    if (this.dirHandle) {
+      try {
+        const fileHandle = await this.dirHandle.getFileHandle('.upload-history.json', { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(new Blob([content], { type: 'application/json' }));
+        await writable.close();
+        console.log(`✅ Saved ${history.length} upload records (web)`);
+      } catch (error) {
+        console.error('Failed to save upload history (web):', error);
       }
     }
   }
@@ -147,6 +179,16 @@ export class LocalStorageService {
     return `${normalizedBase}/${sanitizeBatch}/${sanitizeDocType}`;
   }
 
+  // Web helpers using the File System Access API
+  private async ensureWebSubfolder(batchNumber: string, docType: DocType): Promise<FileSystemDirectoryHandle> {
+    if (!this.dirHandle) throw new Error('No folder selected. Click Browse to choose a base folder.');
+    const sanitizeBatch = batchNumber.toString().replace(/[^a-zA-Z0-9-_]/g, '_');
+    const sanitizeDocType = docType.replace(/[^a-zA-Z0-9-_\s]/g, '_');
+    const batchDir = await this.dirHandle.getDirectoryHandle(sanitizeBatch, { create: true });
+    const typeDir = await batchDir.getDirectoryHandle(sanitizeDocType, { create: true });
+    return typeDir;
+  }
+
   /**
    * Upload a file to local storage
    */
@@ -156,42 +198,45 @@ export class LocalStorageService {
     docType: DocType,
     basePath: string
   ): Promise<void> {
-    if (!basePath) {
-      throw new Error('Local storage path is not configured');
-    }
-
-    if (typeof window === 'undefined' || !(window as any).electron) {
-      throw new Error('Electron file system API not available');
-    }
+    const isElectron = typeof window !== 'undefined' && (window as any).electron;
+    if (isElectron && !basePath) throw new Error('Local storage path is not configured');
+    if (!isElectron && !this.dirHandle) throw new Error('No folder selected. Click Browse to choose a base folder.');
 
     // Load history if base path changed
-    if (this.basePath !== basePath) {
+    if (this.basePath !== basePath || (!isElectron && !this.uploadHistory.size)) {
       this.basePath = basePath;
       await this.loadUploadHistory(basePath);
     }
 
     const batchNumber = record['Batch number'] || 'NOBATCH';
     const fileName = this.generateFileName(record, docType, file.name, basePath);
-    const folderPath = this.generateFolderPath(basePath, batchNumber, docType);
     
     console.log('📁 Uploading to local storage:', {
       batchNumber,
       docType,
       fileName,
-      folderPath,
+      folderPath: isElectron ? this.generateFolderPath(basePath, batchNumber, docType) : `(web folder)/${batchNumber}/${docType}`,
       fileSize: file.size
     });
     
     try {
-      // Read file as ArrayBuffer
-      const arrayBuffer = await file.arrayBuffer();
-      const buffer = new Uint8Array(arrayBuffer);
-
-      console.log('💾 Calling Electron IPC to save file...');
-      // Use Electron IPC to save the file
-      const savedPath = await (window as any).electron.saveFile(folderPath, fileName, buffer);
-      
-      console.log('✅ File saved successfully:', savedPath);
+      if (isElectron) {
+        // Read file as ArrayBuffer
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = new Uint8Array(arrayBuffer);
+        const folderPath = this.generateFolderPath(basePath, batchNumber, docType);
+        console.log('💾 Calling Electron IPC to save file...');
+        const savedPath = await (window as any).electron.saveFile(folderPath, fileName, buffer);
+        console.log('✅ File saved successfully:', savedPath);
+      } else {
+        // Web write to selected directory
+        const targetDir = await this.ensureWebSubfolder(batchNumber, docType);
+        const fileHandle = await targetDir.getFileHandle(fileName, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(file);
+        await writable.close();
+        console.log('✅ File saved successfully in web folder');
+      }
 
       // Record the upload
       const key = this.getFileKey(batchNumber, docType, fileName);
@@ -200,7 +245,7 @@ export class LocalStorageService {
         docType,
         fileName,
         uploadedAt: new Date().toISOString(),
-        filePath: savedPath,
+        filePath: isElectron ? this.generateFolderPath(basePath, batchNumber, docType) + '/' + fileName : `${batchNumber}/${docType}/${fileName}`,
       };
 
       this.uploadHistory.set(key, uploadRecord);
@@ -235,9 +280,20 @@ export class LocalStorageService {
    * Initialize and load history for a given base path
    */
   public async initialize(basePath: string): Promise<void> {
-    if (this.basePath !== basePath) {
-      this.basePath = basePath;
-      await this.loadUploadHistory(basePath);
+    const isElectron = typeof window !== 'undefined' && (window as any).electron;
+    if (isElectron) {
+      if (this.basePath !== basePath) {
+        this.basePath = basePath;
+        await this.loadUploadHistory(basePath);
+      }
+      return;
+    }
+    // Web: load persisted directory handle (if available)
+    try {
+      this.dirHandle = await getDirectoryHandle();
+      await this.loadUploadHistory('');
+    } catch (e) {
+      console.warn('No persisted directory handle found for web local storage');
     }
   }
 
