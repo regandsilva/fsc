@@ -1,0 +1,5 @@
+{
+  "name": "FSC Document Hub",
+  "description": "A document management application to organize FSC reports and related files. It allows users to connect to their Airtable base, view reports, upload associated documents (like POs and invoices), and upload them directly to a specified folder in Microsoft OneDrive.",
+  "requestFramePermissions": []
+}
