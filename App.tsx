@@ -492,26 +492,26 @@ const App: React.FC = () => {
             
             {/* Stats Summary */}
             {!isLoading && !error && data.length > 0 && (
-              <div className="mb-4 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                   <div className="text-center">
-                    <div className="text-xl font-bold text-gray-900">{dataStats.total}</div>
-                    <div className="text-[11px] text-gray-600 uppercase tracking-wide">Total Records</div>
+                    <div className="text-2xl font-bold text-gray-900">{dataStats.total}</div>
+                    <div className="text-xs text-gray-600 uppercase tracking-wide">Total Records</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-xl font-bold text-green-600">{dataStats.completeCount}</div>
-                    <div className="text-[11px] text-gray-600 uppercase tracking-wide">Fully Completed</div>
+                    <div className="text-2xl font-bold text-green-600">{dataStats.completeCount}</div>
+                    <div className="text-xs text-gray-600 uppercase tracking-wide">Fully Completed</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-xl font-bold text-yellow-600">{dataStats.partialCount}</div>
-                    <div className="text-[11px] text-gray-600 uppercase tracking-wide">Partially Uploaded</div>
+                    <div className="text-2xl font-bold text-yellow-600">{dataStats.partialCount}</div>
+                    <div className="text-xs text-gray-600 uppercase tracking-wide">Partially Uploaded</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-xl font-bold text-red-600">{dataStats.noneCount}</div>
-                    <div className="text-[11px] text-gray-600 uppercase tracking-wide">Not Started</div>
+                    <div className="text-2xl font-bold text-red-600">{dataStats.noneCount}</div>
+                    <div className="text-xs text-gray-600 uppercase tracking-wide">Not Started</div>
                   </div>
                 </div>
-                <div className="mt-2 text-center text-[11px] text-gray-500">
+                <div className="mt-3 text-center text-xs text-gray-500">
                   {dataStats.completeCount > 0 && (
                     <span>{Math.round((dataStats.completeCount / dataStats.total) * 100)}% completion rate</span>
                   )}
