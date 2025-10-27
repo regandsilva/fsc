@@ -90,6 +90,18 @@ export class LocalStorageService {
     } else {
       // Web: use File System Access API to scan directory
       try {
+        // Request permission before scanning
+        // @ts-ignore
+        const permission = await this.dirHandle!.queryPermission({ mode: 'readwrite' });
+        if (permission !== 'granted') {
+          // @ts-ignore
+          const newPermission = await this.dirHandle!.requestPermission({ mode: 'readwrite' });
+          if (newPermission !== 'granted') {
+            console.warn('Permission denied to scan folder. Counts may be inaccurate.');
+            return;
+          }
+        }
+        
         // @ts-ignore
         for await (const batchEntry of this.dirHandle!.values()) {
           if (batchEntry.kind !== 'directory') continue;
@@ -152,6 +164,18 @@ export class LocalStorageService {
     // Web write
     if (this.dirHandle) {
       try {
+        // Request permission before writing
+        // @ts-ignore
+        const permission = await this.dirHandle.queryPermission({ mode: 'readwrite' });
+        if (permission !== 'granted') {
+          // @ts-ignore
+          const newPermission = await this.dirHandle.requestPermission({ mode: 'readwrite' });
+          if (newPermission !== 'granted') {
+            console.warn('Permission denied to save upload history');
+            return;
+          }
+        }
+        
         const fileHandle = await this.dirHandle.getFileHandle('.upload-history.json', { create: true });
         const writable = await fileHandle.createWritable();
         await writable.write(new Blob([content], { type: 'application/json' }));
@@ -247,6 +271,23 @@ export class LocalStorageService {
   // Web helpers using the File System Access API
   private async ensureWebSubfolder(batchNumber: string, docType: DocType): Promise<FileSystemDirectoryHandle> {
     if (!this.dirHandle) throw new Error('No folder selected. Click Browse to choose a base folder.');
+    
+    // Request permission before accessing
+    try {
+      // @ts-ignore
+      const permission = await this.dirHandle.queryPermission({ mode: 'readwrite' });
+      if (permission !== 'granted') {
+        // @ts-ignore
+        const newPermission = await this.dirHandle.requestPermission({ mode: 'readwrite' });
+        if (newPermission !== 'granted') {
+          throw new Error('Permission denied to access the folder. Please re-select the folder in Settings.');
+        }
+      }
+    } catch (e) {
+      console.warn('Permission check failed:', e);
+      throw new Error('Permission denied to access the folder. Please re-select the folder in Settings.');
+    }
+    
     const sanitizeBatch = batchNumber.toString().replace(/[^a-zA-Z0-9-_]/g, '_');
     const sanitizeDocType = docType.replace(/[^a-zA-Z0-9-_\s]/g, '_');
     const batchDir = await this.dirHandle.getDirectoryHandle(sanitizeBatch, { create: true });
