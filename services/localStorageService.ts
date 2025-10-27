@@ -68,6 +68,71 @@ export class LocalStorageService {
   }
 
   /**
+   * Scan the actual folder to verify which files exist and reconcile with upload history.
+   * Removes stale entries for files that were deleted from disk.
+   */
+  private async scanAndReconcileFolder(basePath: string): Promise<void> {
+    const isElectron = typeof window !== 'undefined' && (window as any).electron;
+    
+    if (isElectron && !basePath) return;
+    if (!isElectron && !this.dirHandle) return;
+
+    console.log('🔍 Scanning folder to verify uploaded files...');
+    
+    const existingFiles = new Set<string>();
+
+    if (isElectron) {
+      // Electron: Since we removed Electron code, just clear history on path change
+      // User can re-upload as needed
+      console.log('⚠️ Electron mode detected but no IPC available. Clearing history.');
+      this.uploadHistory.clear();
+      return;
+    } else {
+      // Web: use File System Access API to scan directory
+      try {
+        // @ts-ignore
+        for await (const batchEntry of this.dirHandle!.values()) {
+          if (batchEntry.kind !== 'directory') continue;
+          const batchName = batchEntry.name;
+          
+          // @ts-ignore
+          for await (const docTypeEntry of batchEntry.values()) {
+            if (docTypeEntry.kind !== 'directory') continue;
+            const docTypeName = docTypeEntry.name;
+            
+            // @ts-ignore
+            for await (const fileEntry of docTypeEntry.values()) {
+              if (fileEntry.kind === 'file') {
+                const fileName = fileEntry.name;
+                const key = this.getFileKey(batchName, docTypeName as DocType, fileName);
+                existingFiles.add(key);
+              }
+            }
+          }
+        }
+        
+        // Remove history entries that don't have corresponding files
+        const keysToRemove: string[] = [];
+        for (const key of this.uploadHistory.keys()) {
+          if (!existingFiles.has(key)) {
+            keysToRemove.push(key);
+          }
+        }
+        
+        keysToRemove.forEach(key => this.uploadHistory.delete(key));
+        if (keysToRemove.length > 0) {
+          console.log(`🧹 Removed ${keysToRemove.length} stale entries from web folder history`);
+          await this.saveUploadHistory('');
+        }
+        
+        console.log(`✅ Scan complete: ${existingFiles.size} files found in folder`);
+      } catch (error) {
+        console.warn('Could not scan web folder:', error);
+      }
+    }
+  }
+
+  /**
    * Save upload history to .upload-history.json in the base folder
    */
   private async saveUploadHistory(basePath: string): Promise<void> {
@@ -285,13 +350,17 @@ export class LocalStorageService {
       if (this.basePath !== basePath) {
         this.basePath = basePath;
         await this.loadUploadHistory(basePath);
+        await this.scanAndReconcileFolder(basePath);
       }
       return;
     }
     // Web: load persisted directory handle (if available)
     try {
       this.dirHandle = await getDirectoryHandle();
-      await this.loadUploadHistory('');
+      if (this.dirHandle) {
+        await this.loadUploadHistory('');
+        await this.scanAndReconcileFolder('');
+      }
     } catch (e) {
       console.warn('No persisted directory handle found for web local storage');
     }
