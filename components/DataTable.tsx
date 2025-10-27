@@ -121,9 +121,9 @@ const FileUploadCell: React.FC<FileUploadCellProps> = ({
   const hasFiles = fileCount > 0;
 
   return (
-    <td className="px-4 py-4 text-center">
+    <td className="px-3 py-2.5 text-center">
       <div className="flex flex-col items-center gap-1">
-        <label className={`cursor-pointer inline-flex items-center justify-center px-3 py-1.5 rounded text-xs font-medium transition ${
+        <label className={`cursor-pointer inline-flex items-center justify-center px-2.5 py-1 rounded text-xs font-medium transition ${
           uploading ? 'bg-blue-100 text-blue-700' :
           status === 'success' ? 'bg-green-100 text-green-700' :
           status === 'error' ? 'bg-red-100 text-red-700' :
@@ -306,7 +306,7 @@ export const DataTable: React.FC<DataTableProps> = ({
               <th 
                 key={header} 
                 scope="col" 
-                className={`px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-move select-none transition-colors ${
+                className={`px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-move select-none transition-colors ${
                   dragOverColumn === header ? 'bg-blue-100' : ''
                 } ${
                   draggedColumn === header ? 'opacity-50' : ''
@@ -325,10 +325,10 @@ export const DataTable: React.FC<DataTableProps> = ({
                 </button>
               </th>
             ))}
-            <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">PO</th>
-            <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">SO</th>
-            <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier Invoice</th>
-            <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Customer Invoice</th>
+            <th scope="col" className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">PO</th>
+            <th scope="col" className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">SO</th>
+            <th scope="col" className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier Invoice</th>
+            <th scope="col" className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Customer Invoice</th>
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
@@ -336,7 +336,7 @@ export const DataTable: React.FC<DataTableProps> = ({
             <React.Fragment key={record.id}>
               <tr className="hover:bg-gray-50">
                 {displayHeaders.map(header => (
-                  <td key={header} className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td key={header} className="px-4 py-2.5 whitespace-nowrap text-sm text-gray-500">
                     {renderCellContent(record[header], header)}
                   </td>
                 ))}
@@ -387,26 +387,26 @@ export const DataTable: React.FC<DataTableProps> = ({
       </table>
       
       {/* Mobile Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:hidden">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:hidden">
         {data.map((record) => (
-          <div key={record.id} className="bg-white rounded-lg shadow p-4 space-y-3 border border-gray-200">
+          <div key={record.id} className="bg-white rounded-lg shadow p-3 space-y-2 border border-gray-200">
             {displayHeaders.map(header => (
               <div key={header}>
-                <p className="text-xs font-bold text-gray-500 uppercase">{header}</p>
-                <p className="text-sm text-gray-800">{renderCellContent(record[header], header) || 'N/A'}</p>
+                <p className="text-[10px] font-bold text-gray-500 uppercase">{header}</p>
+                <p className="text-xs text-gray-800">{renderCellContent(record[header], header) || 'N/A'}</p>
               </div>
             ))}
              <div>
-                <p className="text-xs font-bold text-gray-500 uppercase">Attachments</p>
+                <p className="text-[10px] font-bold text-gray-500 uppercase">Attachments</p>
                 <DocStatusIcons files={managedFiles[record.id] || emptyFiles} />
             </div>
-            <button onClick={() => onToggleExpand(record.id)} className="w-full mt-4 flex items-center justify-center space-x-2 bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition">
-              <FolderKanban className="h-5 w-5" />
+            <button onClick={() => onToggleExpand(record.id)} className="w-full mt-2 flex items-center justify-center space-x-1.5 bg-blue-600 text-white font-semibold py-1.5 px-3 text-xs rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition">
+              <FolderKanban className="h-4 w-4" />
               <span>{expandedRecordId === record.id ? 'Close' : 'Manage Files'}</span>
-               {expandedRecordId === record.id ? <ChevronUp className="h-5 w-5 ml-1" /> : <ChevronDown className="h-5 w-5 ml-1" />}
+               {expandedRecordId === record.id ? <ChevronUp className="h-4 w-4 ml-1" /> : <ChevronDown className="h-4 w-4 ml-1" />}
             </button>
             {expandedRecordId === record.id && (
-                <div className="p-4 bg-gray-50 rounded-b-lg -m-4 mt-4">
+                <div className="p-3 bg-gray-50 rounded-b-lg -m-3 mt-2">
                      <FileManagementRow
                         record={record}
                         managedFiles={managedFiles[record.id] || emptyFiles}

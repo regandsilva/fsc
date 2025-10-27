@@ -60,11 +60,11 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
     };
 
     return (
-        <div className="mb-6 p-4 bg-gray-50 rounded-lg border">
-            <div className="grid grid-cols-1 gap-4">
+        <div className="mb-4 p-3 bg-gray-50 rounded-lg border">
+            <div className="grid grid-cols-1 gap-3">
                 {/* Text Search */}
                 <div>
-                    <label htmlFor="text-search" className="block text-sm font-medium text-gray-700">
+                    <label htmlFor="text-search" className="block text-xs font-medium text-gray-700 mb-1">
                         Search
                     </label>
                     <input
@@ -73,19 +73,19 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
                         placeholder="Search across all fields..."
                         value={textFilter}
                         onChange={(e) => setTextFilter(e.target.value)}
-                        className="mt-1 w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                        className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                     />
                 </div>
                 
                 {/* Upload Status Filter */}
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
                         Upload Status
                     </label>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-1.5">
                         <button
                             onClick={() => setUploadStatusFilter('all')}
-                            className={`px-4 py-2 rounded-lg font-medium transition ${
+                            className={`px-3 py-1 text-xs rounded-md font-medium transition ${
                                 uploadStatusFilter === 'all'
                                     ? 'bg-blue-600 text-white'
                                     : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
@@ -95,27 +95,27 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
                         </button>
                         <button
                             onClick={() => setUploadStatusFilter('complete')}
-                            className={`px-4 py-2 rounded-lg font-medium transition ${
+                            className={`px-3 py-1 text-xs rounded-md font-medium transition ${
                                 uploadStatusFilter === 'complete'
                                     ? 'bg-green-600 text-white'
                                     : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
                             }`}
                         >
-                            ✓ Fully Completed
+                            ✓ Complete
                         </button>
                         <button
                             onClick={() => setUploadStatusFilter('partial')}
-                            className={`px-4 py-2 rounded-lg font-medium transition ${
+                            className={`px-3 py-1 text-xs rounded-md font-medium transition ${
                                 uploadStatusFilter === 'partial'
                                     ? 'bg-yellow-600 text-white'
                                     : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
                             }`}
                         >
-                            ⚠ Partially Uploaded
+                            ⚠ Partial
                         </button>
                         <button
                             onClick={() => setUploadStatusFilter('none')}
-                            className={`px-4 py-2 rounded-lg font-medium transition ${
+                            className={`px-3 py-1 text-xs rounded-md font-medium transition ${
                                 uploadStatusFilter === 'none'
                                     ? 'bg-red-600 text-white'
                                     : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
@@ -127,16 +127,16 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
                 </div>
                 
                 {/* FSC Approval Date Filter */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
-                        <label htmlFor="date-operator" className="block text-sm font-medium text-gray-700">
+                        <label htmlFor="date-operator" className="block text-xs font-medium text-gray-700 mb-1">
                             FSC Approval Date
                         </label>
                         <select
                             id="date-operator"
                             value={dateFilter.operator}
                             onChange={handleOperatorChange}
-                            className="mt-1 w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                            className="w-full px-3 py-1.5 text-xs border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                         >
                             <option value="exact">Exactly on</option>
                             <option value="before">On or Before</option>
@@ -145,12 +145,12 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
                         </select>
                     </div>
                     
-                    <div className={`${dateFilter.operator === 'between' ? 'md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-2' : ''}`}>
+                    <div className={`${dateFilter.operator === 'between' ? 'md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-1.5' : ''}`}>
                         <input
                             type="date"
                             value={dateFilter.date1}
                             onChange={handleDate1Change}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                            className="w-full px-3 py-1.5 text-xs border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                             aria-label="FSC Approval start date"
                         />
                         {dateFilter.operator === 'between' && (
@@ -158,7 +158,7 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
                                 type="date"
                                 value={dateFilter.date2}
                                 onChange={handleDate2Change}
-                                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                                className="w-full px-3 py-1.5 text-xs border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                                 aria-label="FSC Approval end date"
                             />
                         )}
@@ -166,16 +166,16 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
                 </div>
 
                 {/* Created Date Filter */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
-                        <label htmlFor="created-date-operator" className="block text-sm font-medium text-gray-700">
+                        <label htmlFor="created-date-operator" className="block text-xs font-medium text-gray-700 mb-1">
                             Created Date
                         </label>
                         <select
                             id="created-date-operator"
                             value={createdDateFilter.operator}
                             onChange={handleCreatedOperatorChange}
-                            className="mt-1 w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                            className="w-full px-3 py-1.5 text-xs border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                         >
                             <option value="exact">Exactly on</option>
                             <option value="before">On or Before</option>
@@ -184,12 +184,12 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
                         </select>
                     </div>
                     
-                    <div className={`${createdDateFilter.operator === 'between' ? 'md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-2' : ''}`}>
+                    <div className={`${createdDateFilter.operator === 'between' ? 'md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-1.5' : ''}`}>
                         <input
                             type="date"
                             value={createdDateFilter.date1}
                             onChange={handleCreatedDate1Change}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                            className="w-full px-3 py-1.5 text-xs border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                             aria-label="Created start date"
                         />
                         {createdDateFilter.operator === 'between' && (
@@ -197,7 +197,7 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
                                 type="date"
                                 value={createdDateFilter.date2}
                                 onChange={handleCreatedDate2Change}
-                                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                                className="w-full px-3 py-1.5 text-xs border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                                 aria-label="Created end date"
                             />
                         )}
@@ -207,7 +207,7 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
                 {/* Clear Button */}
                 <button
                     onClick={handleClearFilters}
-                    className="w-full px-4 py-2 border border-transparent rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-400 transition"
+                    className="w-full px-3 py-1.5 text-xs border border-transparent rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-400 transition"
                     aria-label="Clear all filters"
                 >
                     Clear All Filters

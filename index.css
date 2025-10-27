@@ -4,5 +4,40 @@
 @tailwind utilities;
 
 /* Custom styles */
-:root { color-scheme: light; }
-body { margin: 0; }
+:root { 
+  color-scheme: light;
+}
+
+body { 
+  margin: 0;
+  font-size: 14px;
+}
+
+/* Table text sizing */
+table {
+  font-size: 0.875rem; /* 14px */
+}
+
+th, td {
+  font-size: 0.8125rem; /* 13px */
+  padding: 0.5rem 0.75rem !important;
+}
+
+/* Compact buttons */
+button {
+  font-size: 0.875rem;
+}
+
+/* Tighter spacing for form elements */
+input, select, textarea {
+  font-size: 0.875rem;
+}
+
+/* Stats panel more compact */
+.stats-panel {
+  padding: 1rem !important;
+}
+
+.stats-panel > div {
+  gap: 0.75rem !important;
+}
