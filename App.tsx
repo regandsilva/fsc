@@ -258,75 +258,38 @@ const App: React.FC = () => {
       }
     }
 
-    // Filter by Created Date
-    const { operator: createdOperator, date1: createdDate1, date2: createdDate2 } = createdDateFilter;
-    if (createdDate1) {
-      const filterDate1 = parseDateToUTC(createdDate1);
-      
-      if (filterDate1) {
-        filteredItems = filteredItems.filter(record => {
-          const recordDateStr = record['Created'];
-          // Created is an ISO string, so we can parse it directly
-          const recordDate = recordDateStr ? new Date(recordDateStr) : null;
-          
-          if (!recordDate || isNaN(recordDate.getTime())) return false;
-
-          // Convert to UTC for comparison
-          const recordDateUTC = new Date(Date.UTC(
-            recordDate.getFullYear(),
-            recordDate.getMonth(),
-            recordDate.getDate()
-          ));
-
-          switch (createdOperator) {
-            case 'exact':
-              return recordDateUTC.getTime() === filterDate1.getTime();
-            case 'before':
-              return recordDateUTC.getTime() <= filterDate1.getTime();
-            case 'after':
-              return recordDateUTC.getTime() >= filterDate1.getTime();
-            case 'between':
-              if (createdDate2) {
-                const filterDate2 = parseDateToUTC(createdDate2);
-                if (filterDate2) {
-                  return recordDateUTC.getTime() >= filterDate1.getTime() && recordDateUTC.getTime() <= filterDate2.getTime();
-                }
-              }
-              return true; 
-            default:
-              return true;
-          }
-        });
-      }
-    }
-
     // Filter by upload status
     if (uploadStatusFilter !== 'all') {
       filteredItems = filteredItems.filter(record => {
         const recordFiles = allManagedFiles[record.id] || { [DocType.PO]: [], [DocType.SO]: [], [DocType.SupplierInvoice]: [], [DocType.CustomerInvoice]: [] };
-        
-        // Count uploaded files for this record
-        let uploadedCount = 0;
+
+        // Determine presence per DocType (not just total count)
+        let hasPO = false, hasSO = false, hasSupInv = false, hasCustInv = false;
         if (appSettings.storageMode === 'local' && localStorageServiceRef.current) {
           const batchNumber = record['Batch number'];
           if (batchNumber) {
-            uploadedCount = Object.values(DocType).reduce((sum, docType) => {
-              return sum + localStorageServiceRef.current!.getUploadedFileCount(batchNumber, docType);
-            }, 0);
+            hasPO = localStorageServiceRef.current.getUploadedFileCount(batchNumber, DocType.PO) > 0;
+            hasSO = localStorageServiceRef.current.getUploadedFileCount(batchNumber, DocType.SO) > 0;
+            hasSupInv = localStorageServiceRef.current.getUploadedFileCount(batchNumber, DocType.SupplierInvoice) > 0;
+            hasCustInv = localStorageServiceRef.current.getUploadedFileCount(batchNumber, DocType.CustomerInvoice) > 0;
           }
         } else {
-          uploadedCount = (Object.values(recordFiles) as ManagedFile[][]).reduce((sum: number, files) => sum + files.length, 0);
+          hasPO = (recordFiles[DocType.PO] || []).length > 0;
+          hasSO = (recordFiles[DocType.SO] || []).length > 0;
+          hasSupInv = (recordFiles[DocType.SupplierInvoice] || []).length > 0;
+          hasCustInv = (recordFiles[DocType.CustomerInvoice] || []).length > 0;
         }
 
-        const totalRequired = 4; // PO, SO, Supplier Invoice, Customer Invoice
-        
+        const allPresent = hasPO && hasSO && hasSupInv && hasCustInv;
+        const anyPresent = hasPO || hasSO || hasSupInv || hasCustInv;
+
         switch (uploadStatusFilter) {
           case 'complete':
-            return uploadedCount >= totalRequired;
+            return allPresent;
           case 'partial':
-            return uploadedCount > 0 && uploadedCount < totalRequired;
+            return anyPresent && !allPresent;
           case 'none':
-            return uploadedCount === 0;
+            return !anyPresent;
           default:
             return true;
         }
@@ -429,24 +392,29 @@ const App: React.FC = () => {
 
     processedData.forEach(record => {
       const recordFiles = allManagedFiles[record.id] || { [DocType.PO]: [], [DocType.SO]: [], [DocType.SupplierInvoice]: [], [DocType.CustomerInvoice]: [] };
-      
-      let uploadedCount = 0;
+
+      let hasPO = false, hasSO = false, hasSupInv = false, hasCustInv = false;
       if (appSettings.storageMode === 'local' && localStorageServiceRef.current) {
         const batchNumber = record['Batch number'];
         if (batchNumber) {
-          uploadedCount = Object.values(DocType).reduce((sum, docType) => {
-            return sum + localStorageServiceRef.current!.getUploadedFileCount(batchNumber, docType);
-          }, 0);
+          hasPO = localStorageServiceRef.current.getUploadedFileCount(batchNumber, DocType.PO) > 0;
+          hasSO = localStorageServiceRef.current.getUploadedFileCount(batchNumber, DocType.SO) > 0;
+          hasSupInv = localStorageServiceRef.current.getUploadedFileCount(batchNumber, DocType.SupplierInvoice) > 0;
+          hasCustInv = localStorageServiceRef.current.getUploadedFileCount(batchNumber, DocType.CustomerInvoice) > 0;
         }
       } else {
-        uploadedCount = (Object.values(recordFiles) as ManagedFile[][]).reduce((sum: number, files) => sum + files.length, 0);
+        hasPO = (recordFiles[DocType.PO] || []).length > 0;
+        hasSO = (recordFiles[DocType.SO] || []).length > 0;
+        hasSupInv = (recordFiles[DocType.SupplierInvoice] || []).length > 0;
+        hasCustInv = (recordFiles[DocType.CustomerInvoice] || []).length > 0;
       }
 
-      const totalRequired = 4; // PO, SO, Supplier Invoice, Customer Invoice
-      
-      if (uploadedCount >= totalRequired) {
+      const allPresent = hasPO && hasSO && hasSupInv && hasCustInv;
+      const anyPresent = hasPO || hasSO || hasSupInv || hasCustInv;
+
+      if (allPresent) {
         completeCount++;
-      } else if (uploadedCount > 0) {
+      } else if (anyPresent) {
         partialCount++;
       } else {
         noneCount++;
