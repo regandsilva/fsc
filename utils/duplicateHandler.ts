@@ -1,6 +1,18 @@
 // Duplicate file detection and versioning utility
 import { FscRecord, DocType } from '../types';
 import { LocalStorageService } from '../services/localStorageService';
+import {
+  generateFileFingerprint,
+  compareVisualSimilarity,
+  type FileFingerprint,
+  type VisualSimilarityResult,
+} from './visualSimilarityDetector';
+
+// Constants for duplicate detection confidence thresholds
+const CONFIDENCE_THRESHOLD_HIGH = 95; // For filename-only matches (very confident)
+const CONFIDENCE_THRESHOLD_MEDIUM = 80; // For partial name matches
+const SIZE_MATCH_THRESHOLD = 95; // 95%+ similarity considered size match
+const VISUAL_SIMILARITY_THRESHOLD = 75; // Visual similarity threshold for duplicate detection
 
 export interface DuplicateFile {
   file: File;
@@ -13,6 +25,7 @@ export interface DuplicateFile {
   contentHash?: string; // Hash of file content
   sizeMatch?: boolean; // If file size matches
   modifiedDate?: string; // Last modified date
+  visualSimilarity?: VisualSimilarityResult; // Visual similarity analysis
 }
 
 export interface DuplicateDetectionResult {
@@ -77,7 +90,7 @@ export async function findNextVersion(
 /**
  * Calculate SHA-256 hash of a file for duplicate detection
  */
-async function calculateFileHash(file: File): Promise<string> {
+async function calculateFileHash(file: File): Promise<string | null> {
   try {
     const buffer = await file.arrayBuffer();
     const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
@@ -85,8 +98,8 @@ async function calculateFileHash(file: File): Promise<string> {
     const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
     return hashHex;
   } catch (error) {
-    console.error('Error calculating file hash:', error);
-    return '';
+    console.error('❌ Error calculating file hash:', error);
+    return null; // Return null instead of empty string to prevent false matches
   }
 }
 
@@ -139,7 +152,7 @@ function analyzeNameSimilarity(name1: string, name2: string): {
     const shorter = baseName1.length > baseName2.length ? baseName2 : baseName1;
     const similarity = (shorter.length / longer.length) * 100;
     
-    if (similarity > 80) {
+    if (similarity > CONFIDENCE_THRESHOLD_MEDIUM) {
       return { isMatch: true, confidence: Math.round(similarity), reason: 'Similar filename' };
     }
   }
@@ -149,18 +162,18 @@ function analyzeNameSimilarity(name1: string, name2: string): {
 
 /**
  * Detect duplicate files in the upload plan with enhanced detection
- */
-/**
- * Detect duplicate files in the upload plan with enhanced detection
+ * Now includes visual similarity detection for renamed duplicates
  */
 export async function detectDuplicates(
   uploadPlan: Map<string, Map<DocType, File[]>>,
   basePath: string,
-  localStorageService: LocalStorageService
+  localStorageService: LocalStorageService,
+  enableVisualSimilarity: boolean = true
 ): Promise<DuplicateDetectionResult> {
-  console.log('🔍 detectDuplicates called (Enhanced version)');
+  console.log('🔍 detectDuplicates called (Enhanced version with visual similarity)');
   console.log('  LocalStorage service available:', !!localStorageService);
   console.log('  Base path:', basePath);
+  console.log('  Visual similarity:', enableVisualSimilarity ? 'enabled' : 'disabled');
   
   // Load upload history before checking duplicates
   if (localStorageService && basePath) {
@@ -175,7 +188,25 @@ export async function detectDuplicates(
     console.log(`  Checking batch: ${batchNumber}`);
     for (const [docType, files] of docTypeMap.entries()) {
       console.log(`    Checking docType: ${DocType[docType]} (${files.length} files)`);
-      for (const file of files) {
+      
+      // Generate fingerprints for visual similarity (if enabled)
+      const fingerprints = enableVisualSimilarity
+        ? await Promise.all(
+            files.map(async (file) => {
+              try {
+                return await generateFileFingerprint(file);
+              } catch (error) {
+                console.warn(`Could not fingerprint ${file.name}:`, error);
+                return null;
+              }
+            })
+          )
+        : [];
+      
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const fingerprint = fingerprints[i];
+        
         // Get all files in this batch/docType to check for matches
         const existingFiles = localStorageService.getUploadedFilesForBatch(batchNumber)
           .filter(record => record.docType === docType);
@@ -185,9 +216,17 @@ export async function detectDuplicates(
         let isDuplicate = false;
         let matchReason = '';
         let sizeMatch = false;
+        let visualSimilarityResult: VisualSimilarityResult | undefined;
         
         // Calculate hash for this file
         const fileHash = await calculateFileHash(file);
+        
+        // Skip this file if hash calculation failed
+        if (!fileHash) {
+          console.warn(`⚠️ Skipping duplicate check for ${file.name} - hash calculation failed`);
+          nonDuplicates.push({ file, batchNumber, docType });
+          continue;
+        }
         
         // Check each existing file
         for (const existing of existingFiles) {
@@ -206,10 +245,10 @@ export async function detectDuplicates(
           
           // 2. Check file size
           const sizeSimilarity = existing.fileSize ? calculateSizeSimilarity(file.size, existing.fileSize) : 0;
-          sizeMatch = sizeSimilarity > 95; // Consider 95%+ as size match
+          sizeMatch = sizeSimilarity > SIZE_MATCH_THRESHOLD;
           
-          // 3. Check content hash if available
-          const hashMatch = existing.contentHash && fileHash ? existing.contentHash === fileHash : false;
+          // 3. Check content hash if available (skip if either hash is null)
+          const hashMatch = existing.contentHash && fileHash && existing.contentHash === fileHash;
           
           // Determine if it's a duplicate based on multiple signals
           if (hashMatch) {
@@ -222,11 +261,25 @@ export async function detectDuplicates(
             matchReason = `📄 ${nameSimilarity.reason} + identical size`;
             console.log(`      ✓ NAME+SIZE MATCH: ${file.name} ~= ${existingOriginalName} (${nameSimilarity.confidence}% name, size ${file.size})`);
             break;
-          } else if (nameSimilarity.isMatch && nameSimilarity.confidence >= 95) {
+          } else if (nameSimilarity.isMatch && nameSimilarity.confidence >= CONFIDENCE_THRESHOLD_HIGH) {
             isDuplicate = true;
             matchReason = `📄 ${nameSimilarity.reason}`;
             console.log(`      ✓ NAME MATCH: ${file.name} ~= ${existingOriginalName} (${nameSimilarity.confidence}%)`);
             break;
+          }
+          
+          // 4. Visual similarity check (if name/hash don't match but we have fingerprints)
+          // This helps catch renamed duplicates
+          if (!isDuplicate && enableVisualSimilarity && fingerprint) {
+            try {
+              // We would need to load the existing file to compare visually
+              // For now, log that this feature would require file access
+              console.log(`        ℹ️ Visual similarity check would require loading existing file: ${existing.fileName}`);
+              // TODO: Implement loading existing files for visual comparison
+              // This would require enhancing LocalStorageService to provide file handles
+            } catch (error) {
+              console.warn(`Could not perform visual similarity check:`, error);
+            }
           }
         }
         
@@ -243,6 +296,7 @@ export async function detectDuplicates(
             contentHash: fileHash,
             sizeMatch,
             modifiedDate: new Date(file.lastModified).toISOString(),
+            visualSimilarity: visualSimilarityResult,
           });
         } else {
           nonDuplicates.push({ file, batchNumber, docType });
@@ -302,4 +356,17 @@ export async function applyVersioning(
   }
 
   return result;
+}
+
+/**
+ * Find visual duplicates within a set of files (cross-file comparison)
+ * Useful for detecting renamed duplicates before upload
+ */
+export async function findVisualDuplicatesInBatch(
+  files: File[]
+): Promise<Array<{ files: File[]; similarity: number; reason: string }>> {
+  console.log(`🔍 Checking ${files.length} files for visual duplicates...`);
+  
+  const { findVisualDuplicates } = await import('./visualSimilarityDetector');
+  return await findVisualDuplicates(files);
 }

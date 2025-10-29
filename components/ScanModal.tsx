@@ -52,12 +52,23 @@ export const ScanModal: React.FC<ScanModalProps> = ({
   };
 
   const selectAllInGroup = (group: DuplicateGroup, groupIdx: number) => {
+    // Safety check: ensure group and files array exist
+    if (!group || !group.files || !Array.isArray(group.files) || group.files.length === 0) {
+      console.warn('⚠️ Invalid group data, cannot select files');
+      return;
+    }
+
     setSelectedFiles(prev => {
       const newSet = new Set(prev);
       // Keep the newest file, select others for deletion
-      const sortedFiles = [...group.files].sort((a, b) => 
-        new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime()
-      );
+      const sortedFiles = [...group.files].sort((a, b) => {
+        // Safety check: ensure lastModified exists
+        if (!a.lastModified || !b.lastModified) {
+          console.warn('⚠️ File missing lastModified date');
+          return 0;
+        }
+        return new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime();
+      });
       
       // Skip the first (newest) file
       sortedFiles.slice(1).forEach(file => {

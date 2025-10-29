@@ -447,7 +447,9 @@ const App: React.FC = () => {
       });
     }
     return filteredItems;
-  }, [data, debouncedTextFilter, dateFilter, createdDateFilter, sortConfig, smartFilter, allManagedFiles, localStorageServiceRef]);
+  }, [data, debouncedTextFilter, dateFilter, createdDateFilter, sortConfig, smartFilter]);
+  // Note: Removed allManagedFiles and localStorageServiceRef from deps to avoid stale closures
+  // Smart filter accesses localStorageServiceRef.current directly
 
   const requestSort = (key: keyof FscRecord) => {
     let direction: 'ascending' | 'descending' = 'ascending';
@@ -539,8 +541,12 @@ const App: React.FC = () => {
         console.log('🚨 Showing duplicate resolution modal');
         setDetectedDuplicates(duplicateResult.duplicates);
         
-        // Store the progress callback for later use
-        setPendingProgressCallback(() => onProgress || null);
+        // Store the progress callback for later use (wrapped to prevent closure issues)
+        if (onProgress) {
+          setPendingProgressCallback(() => onProgress);
+        } else {
+          setPendingProgressCallback(null);
+        }
         
         // IMPORTANT: Build upload plan that includes non-duplicates
         const planWithNonDuplicates = new Map<string, Map<DocType, File[]>>();

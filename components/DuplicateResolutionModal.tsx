@@ -137,6 +137,17 @@ export const DuplicateResolutionModal: React.FC<DuplicateResolutionModalProps> =
                         <div>
                           Size: <span className="font-medium">{(duplicate.file.size / 1024).toFixed(1)} KB</span>
                         </div>
+                        {duplicate.matchReason && (
+                          <div className="mt-2 text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded">
+                            {duplicate.matchReason}
+                          </div>
+                        )}
+                        {duplicate.visualSimilarity && duplicate.visualSimilarity.similarity > 0 && (
+                          <div className="mt-2 text-xs bg-purple-50 text-purple-700 px-2 py-1 rounded">
+                            👁️ Visual similarity: {duplicate.visualSimilarity.similarity}% 
+                            <span className="ml-1">({duplicate.visualSimilarity.matchType.replace(/-/g, ' ')})</span>
+                          </div>
+                        )}
                       </div>
                     </div>
 

@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, FileCheck, AlertTriangle, CheckCircle, X, Sparkles, Ban, FileWarning } from 'lucide-react';
+import { Upload, FileCheck, AlertTriangle, CheckCircle, X, Sparkles, Ban, FileWarning, Link } from 'lucide-react';
 import { FscRecord, DocType, ManagedFile, AppSettings } from '../types';
 import { createBulkUploadPlan, FileAnalysis, getDocTypeLabel } from '../utils/aiFileAnalyzer';
 import { LocalStorageService } from '../services/localStorageService';
 import { SearchableDropdown } from './SearchableDropdown';
+import { detectFileRelationships, type RelationshipAnalysis } from '../utils/relationshipDetector';
 
 
 interface BulkUploadModalProps {
@@ -27,6 +28,7 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
 }) => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploadPlan, setUploadPlan] = useState<ReturnType<typeof createBulkUploadPlan> | null>(null);
+  const [relationshipAnalysis, setRelationshipAnalysis] = useState<RelationshipAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -129,6 +131,10 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
     
     const plan = createBulkUploadPlan(selectedFiles, records);
     setUploadPlan(plan);
+    
+    // Detect file relationships
+    const relationships = detectFileRelationships(selectedFiles);
+    setRelationshipAnalysis(relationships);
     
     // Initialize unmatched files as "skip by default"
     const newEdits = new Map<string, { batch: string; docType: DocType; skipUpload?: boolean }>();
@@ -389,6 +395,67 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
                       <li key={idx}>• {warning}</li>
                     ))}
                   </ul>
+                </div>
+              )}
+
+              {/* File Relationships */}
+              {relationshipAnalysis && relationshipAnalysis.groups.length > 0 && (
+                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                  <h4 className="font-semibold text-indigo-900 mb-3 flex items-center">
+                    <Link className="h-5 w-5 mr-2" />
+                    Related Files Detected ({relationshipAnalysis.summary.totalGroups} group{relationshipAnalysis.summary.totalGroups > 1 ? 's' : ''})
+                  </h4>
+                  <div className="space-y-3">
+                    {relationshipAnalysis.groups.map((group, idx) => (
+                      <div key={idx} className="bg-white border border-indigo-200 rounded p-3">
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-indigo-900">
+                              {group.relationshipType === 'same-po' && '🔗 Same Purchase Order'}
+                              {group.relationshipType === 'same-so' && '🔗 Same Sales Order'}
+                              {group.relationshipType === 'sequence' && '📄 Document Sequence'}
+                              {group.relationshipType === 'po-invoice-set' && '📦 PO + Invoice Set'}
+                              {group.relationshipType === 'so-invoice-set' && '📦 SO + Invoice Set'}
+                            </p>
+                            <p className="text-xs text-indigo-700 mt-1">{group.suggestion}</p>
+                          </div>
+                          <span className={`px-2 py-1 text-xs font-medium rounded ${
+                            group.completeness.isComplete
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-yellow-100 text-yellow-800'
+                          }`}>
+                            {group.completeness.isComplete ? '✓ Complete' : '⚠ Incomplete'}
+                          </span>
+                        </div>
+                        
+                        <div className="mt-2 space-y-1">
+                          {group.files.map((file, fileIdx) => (
+                            <div key={fileIdx} className="flex items-center justify-between text-xs bg-indigo-50 rounded px-2 py-1">
+                              <span className="text-indigo-900 truncate flex-1">{file.fileName}</span>
+                              <span className="text-indigo-600 ml-2 font-mono">{file.detectedReference}</span>
+                              {file.sequenceNumber && (
+                                <span className="text-indigo-600 ml-2">
+                                  ({file.sequenceNumber} of {file.totalInSequence})
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        
+                        {group.warnings && group.warnings.length > 0 && (
+                          <div className="mt-2 text-xs text-yellow-700 bg-yellow-50 rounded px-2 py-1">
+                            ⚠️ {group.warnings.join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {relationshipAnalysis.summary.incompleteGroups > 0 && (
+                    <div className="mt-3 text-xs text-yellow-800 bg-yellow-50 rounded px-3 py-2">
+                      💡 Tip: {relationshipAnalysis.summary.incompleteGroups} group{relationshipAnalysis.summary.incompleteGroups > 1 ? 's' : ''} may be incomplete. Consider uploading related files together for better organization.
+                    </div>
+                  )}
                 </div>
               )}
 

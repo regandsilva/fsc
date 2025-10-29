@@ -610,7 +610,7 @@ export const DataTable: React.FC<DataTableProps> = ({
               );
             })}
             {(() => {
-              const poCol = columnPreferences.getColumn(columnPrefs, 'PO');
+              const poCol = columnPreferences.getColumn(columnPrefs, 'app-PO');
               return poCol?.visible && (
                 <th 
                   scope="col" 
@@ -625,7 +625,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                     <span>PO</span>
                     <div
                       className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 bg-gray-300"
-                      onMouseDown={(e) => handleResizeStart(e, 'PO', poCol.width)}
+                      onMouseDown={(e) => handleResizeStart(e, 'app-PO', poCol.width)}
                       onClick={(e) => e.stopPropagation()}
                     />
                   </div>
@@ -633,7 +633,7 @@ export const DataTable: React.FC<DataTableProps> = ({
               );
             })()}
             {(() => {
-              const soCol = columnPreferences.getColumn(columnPrefs, 'SO');
+              const soCol = columnPreferences.getColumn(columnPrefs, 'app-SO');
               return soCol?.visible && (
                 <th 
                   scope="col" 
@@ -648,7 +648,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                     <span>SO</span>
                     <div
                       className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 bg-gray-300"
-                      onMouseDown={(e) => handleResizeStart(e, 'SO', soCol.width)}
+                      onMouseDown={(e) => handleResizeStart(e, 'app-SO', soCol.width)}
                       onClick={(e) => e.stopPropagation()}
                     />
                   </div>
@@ -656,7 +656,7 @@ export const DataTable: React.FC<DataTableProps> = ({
               );
             })()}
             {(() => {
-              const supplierCol = columnPreferences.getColumn(columnPrefs, 'SupplierInvoice');
+              const supplierCol = columnPreferences.getColumn(columnPrefs, 'app-SupplierInvoice');
               return supplierCol?.visible && (
                 <th 
                   scope="col" 
@@ -671,7 +671,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                     <span>Supplier Invoice</span>
                     <div
                       className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 bg-gray-300"
-                      onMouseDown={(e) => handleResizeStart(e, 'SupplierInvoice', supplierCol.width)}
+                      onMouseDown={(e) => handleResizeStart(e, 'app-SupplierInvoice', supplierCol.width)}
                       onClick={(e) => e.stopPropagation()}
                     />
                   </div>
@@ -679,7 +679,7 @@ export const DataTable: React.FC<DataTableProps> = ({
               );
             })()}
             {(() => {
-              const customerCol = columnPreferences.getColumn(columnPrefs, 'CustomerInvoice');
+              const customerCol = columnPreferences.getColumn(columnPrefs, 'app-CustomerInvoice');
               return customerCol?.visible && (
                 <th 
                   scope="col" 
@@ -694,7 +694,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                     <span>Customer Invoice</span>
                     <div
                       className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 bg-gray-300"
-                      onMouseDown={(e) => handleResizeStart(e, 'CustomerInvoice', customerCol.width)}
+                      onMouseDown={(e) => handleResizeStart(e, 'app-CustomerInvoice', customerCol.width)}
                       onClick={(e) => e.stopPropagation()}
                     />
                   </div>
@@ -702,7 +702,7 @@ export const DataTable: React.FC<DataTableProps> = ({
               );
             })()}
             {(() => {
-              const completionCol = columnPreferences.getColumn(columnPrefs, 'Completion');
+              const completionCol = columnPreferences.getColumn(columnPrefs, 'app-Completion');
               return completionCol?.visible && (
                 <th 
                   scope="col" 
@@ -717,7 +717,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                     <span>Completion</span>
                     <div
                       className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 bg-gray-300"
-                      onMouseDown={(e) => handleResizeStart(e, 'Completion', completionCol.width)}
+                      onMouseDown={(e) => handleResizeStart(e, 'app-Completion', completionCol.width)}
                       onClick={(e) => e.stopPropagation()}
                     />
                   </div>
@@ -749,7 +749,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                   );
                 })}
                 {(() => {
-                  const poCol = columnPreferences.getColumn(columnPrefs, 'PO');
+                  const poCol = columnPreferences.getColumn(columnPrefs, 'app-PO');
                   return poCol?.visible && (
                     <FileUploadCell
                       record={record}
@@ -764,7 +764,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                   );
                 })()}
                 {(() => {
-                  const soCol = columnPreferences.getColumn(columnPrefs, 'SO');
+                  const soCol = columnPreferences.getColumn(columnPrefs, 'app-SO');
                   return soCol?.visible && (
                     <FileUploadCell
                       record={record}
@@ -779,7 +779,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                   );
                 })()}
                 {(() => {
-                  const supplierCol = columnPreferences.getColumn(columnPrefs, 'SupplierInvoice');
+                  const supplierCol = columnPreferences.getColumn(columnPrefs, 'app-SupplierInvoice');
                   return supplierCol?.visible && (
                     <FileUploadCell
                       record={record}
@@ -794,7 +794,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                   );
                 })()}
                 {(() => {
-                  const customerCol = columnPreferences.getColumn(columnPrefs, 'CustomerInvoice');
+                  const customerCol = columnPreferences.getColumn(columnPrefs, 'app-CustomerInvoice');
                   return customerCol?.visible && (
                     <FileUploadCell
                       record={record}
@@ -809,7 +809,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                   );
                 })()}
                 {(() => {
-                  const completionCol = columnPreferences.getColumn(columnPrefs, 'Completion');
+                  const completionCol = columnPreferences.getColumn(columnPrefs, 'app-Completion');
                   return completionCol?.visible && (
                     <td 
                       style={{ 

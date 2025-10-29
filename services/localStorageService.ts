@@ -1,6 +1,13 @@
 import { FscRecord, DocType } from '../types';
 import { getDirectoryHandle } from '../utils/dirHandleStore';
 
+// Constants for file operations and duplicate detection
+const MAX_FILE_SIZE_MB = 100; // Maximum file size in MB to prevent browser crashes
+const SIZE_VARIATION_THRESHOLD = 10; // Maximum size variation % for similar-name duplicates
+const MATCH_CONFIDENCE_IDENTICAL_HASH = 100; // Exact hash match
+const MATCH_CONFIDENCE_SIZE_NAME = 90; // Same size and name
+const MATCH_CONFIDENCE_SIMILAR_NAME = 70; // Similar name only
+
 export interface UploadedFileRecord {
   batchNumber: string;
   docType: DocType;
@@ -49,9 +56,9 @@ export interface ScanResult {
 }
 
 /**
- * Calculate SHA-256 hash of a file
+ * Calculate SHA-256 hash of a file for content comparison
  */
-async function calculateFileHash(file: File): Promise<string> {
+async function calculateFileHash(file: File): Promise<string | null> {
   try {
     const buffer = await file.arrayBuffer();
     const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
@@ -59,8 +66,8 @@ async function calculateFileHash(file: File): Promise<string> {
     const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
     return hashHex;
   } catch (error) {
-    console.error('Error calculating file hash:', error);
-    return '';
+    console.error('❌ Error calculating file hash:', error);
+    return null; // Return null on error to prevent false positives
   }
 }
 
@@ -74,9 +81,22 @@ export class LocalStorageService {
   private uploadHistory: Map<string, UploadedFileRecord> = new Map();
   private basePath: string = '';
   private dirHandle: FileSystemDirectoryHandle | null = null;
+  private isScanning: boolean = false; // Lock to prevent concurrent scans
 
   constructor() {
     // History will be loaded when uploadFile is called with basePath
+  }
+
+  /**
+   * Sanitize filename to prevent path traversal and invalid characters
+   */
+  private sanitizeFileName(fileName: string): string {
+    // Remove path separators and other dangerous characters
+    return fileName
+      .replace(/[\/\\]/g, '_') // Replace path separators
+      .replace(/\.\./g, '__') // Replace double dots
+      .replace(/[<>:"|?*\x00-\x1f]/g, '_') // Replace Windows invalid chars
+      .replace(/^\.+/, '_'); // Don't allow files starting with dots (hidden files)
   }
 
   /**
@@ -405,6 +425,36 @@ export class LocalStorageService {
     validBatchNumbers?: Set<string>,
     onProgress?: (progress: ScanProgress) => void
   ): Promise<ScanResult> {
+    // Race condition protection: prevent concurrent scans
+    if (this.isScanning) {
+      return {
+        success: false,
+        filesFound: 0,
+        newEntriesAdded: 0,
+        orphanedFiles: [],
+        existingEntriesPreserved: 0,
+        errors: ['Scan already in progress. Please wait for the current scan to complete.'],
+        backupCreated: false,
+      };
+    }
+
+    this.isScanning = true;
+
+    try {
+      return await this._performScan(basePath, validBatchNumbers, onProgress);
+    } finally {
+      this.isScanning = false;
+    }
+  }
+
+  /**
+   * Internal scan implementation
+   */
+  private async _performScan(
+    basePath: string,
+    validBatchNumbers?: Set<string>,
+    onProgress?: (progress: ScanProgress) => void
+  ): Promise<ScanResult> {
     const isElectron = typeof window !== 'undefined' && (window as any).electron;
     
     // For now, only support web mode with File System Access API
@@ -698,6 +748,12 @@ export class LocalStorageService {
           // Calculate hash
           const hash = await calculateFileHash(file);
 
+          // Skip files where hash calculation failed
+          if (!hash) {
+            console.warn(`⚠️ Skipping file ${scanned.filePath} - hash calculation failed`);
+            return null;
+          }
+
           return {
             ...scanned,
             fileSize: file.size,
@@ -760,7 +816,7 @@ export class LocalStorageService {
               lastModified: f.lastModified.toISOString(),
             })),
             reason: 'identical-hash',
-            matchConfidence: 100,
+            matchConfidence: MATCH_CONFIDENCE_IDENTICAL_HASH,
           });
         }
       }
@@ -795,7 +851,7 @@ export class LocalStorageService {
                 lastModified: f.lastModified.toISOString(),
               })),
               reason: 'identical-size-name',
-              matchConfidence: 90,
+              matchConfidence: MATCH_CONFIDENCE_SIZE_NAME,
             });
           }
         }
@@ -818,13 +874,13 @@ export class LocalStorageService {
           );
 
           if (!alreadyGrouped) {
-            // Only add if files have similar sizes (within 10%)
+            // Only add if files have similar sizes (within threshold %)
             const sizes = files.map(f => f.fileSize);
             const maxSize = Math.max(...sizes);
             const minSize = Math.min(...sizes);
             const sizeVariation = ((maxSize - minSize) / maxSize) * 100;
 
-            if (sizeVariation < 10) {
+            if (sizeVariation < SIZE_VARIATION_THRESHOLD) {
               duplicateGroups.push({
                 files: files.map(f => ({
                   batchNumber: f.batchNumber,
@@ -836,7 +892,7 @@ export class LocalStorageService {
                   lastModified: f.lastModified.toISOString(),
                 })),
                 reason: 'similar-name',
-                matchConfidence: 70,
+                matchConfidence: MATCH_CONFIDENCE_SIMILAR_NAME,
               });
             }
           }
@@ -906,6 +962,17 @@ export class LocalStorageService {
     if (isElectron && !basePath) throw new Error('Local storage path is not configured');
     if (!isElectron && !this.dirHandle) throw new Error('No folder selected. Click Browse to choose a base folder.');
 
+    // File size validation (prevent crashes with very large files)
+    const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
+    if (file.size > MAX_FILE_SIZE) {
+      throw new Error(`File "${file.name}" is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum size is ${MAX_FILE_SIZE_MB} MB.`);
+    }
+
+    // Empty file validation
+    if (file.size === 0) {
+      console.warn(`⚠️ Warning: File "${file.name}" is empty (0 bytes)`);
+    }
+
     // Load history if base path changed
     if (this.basePath !== basePath || (!isElectron && !this.uploadHistory.size)) {
       this.basePath = basePath;
@@ -914,7 +981,14 @@ export class LocalStorageService {
 
     const batchNumber = record['Batch number'] || 'NOBATCH';
     const batchNumberStr = String(batchNumber); // Ensure it's always a string
-    const fileName = this.generateFileName(record, docType, file.name, basePath, forceReplace);
+    
+    // Sanitize filename to prevent path traversal attacks
+    const sanitizedFileName = this.sanitizeFileName(file.name);
+    if (sanitizedFileName !== file.name) {
+      console.warn(`⚠️ Filename was sanitized: "${file.name}" → "${sanitizedFileName}"`);
+    }
+    
+    const fileName = this.generateFileName(record, docType, sanitizedFileName, basePath, forceReplace);
     
     console.log('📁 Uploading to local storage:', {
       batchNumber: batchNumberStr,
@@ -946,6 +1020,12 @@ export class LocalStorageService {
 
       // Calculate file hash for duplicate detection
       const contentHash = await calculateFileHash(file);
+
+      // Skip upload if hash calculation failed
+      if (!contentHash) {
+        console.error('❌ Failed to calculate file hash, aborting upload');
+        throw new Error('Failed to calculate file hash for duplicate detection');
+      }
 
       // Record the upload
       const key = this.getFileKey(batchNumberStr, docType, fileName);

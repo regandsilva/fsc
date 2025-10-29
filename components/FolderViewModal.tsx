@@ -23,13 +23,13 @@ export const FolderViewModal: React.FC<FolderViewModalProps> = ({
 
   const handleOpenInExplorer = () => {
     if (folderPath) {
-      // Try to open with file:// protocol
-      const fileUrl = `file:///${folderPath.replace(/\\/g, '/')}`;
-      const win = window.open(fileUrl, '_blank');
-      
-      if (!win || win.closed || typeof win.closed === 'undefined') {
-        alert('Unable to open folder in File Explorer due to browser security restrictions.\n\nFolder path: ' + folderPath + '\n\nYou can copy this path and open it manually in File Explorer.');
-      }
+      // Note: Modern browsers block file:// protocol for security reasons
+      // Show alert with copyable path instead
+      alert(
+        'Cannot open folder directly in browser due to security restrictions.\n\n' +
+        'Folder path:\n' + folderPath + '\n\n' +
+        'Please copy this path and open it manually in File Explorer.'
+      );
     } else {
       alert('Folder path not available. This feature requires the local storage path to be configured.');
     }

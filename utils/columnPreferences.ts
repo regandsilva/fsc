@@ -12,7 +12,7 @@ export type AirtableColumnId =
   | 'FSC Case Number'
   | 'PRODUCT NAME (MAX 35 CHARACTERS)';
 
-export type AppColumnId = 'PO' | 'SO' | 'SupplierInvoice' | 'CustomerInvoice' | 'Completion';
+export type AppColumnId = 'app-PO' | 'app-SO' | 'app-SupplierInvoice' | 'app-CustomerInvoice' | 'app-Completion';
 
 export type ColumnId = AirtableColumnId | AppColumnId;
 
@@ -43,11 +43,11 @@ const DEFAULT_COLUMNS: ColumnPreference[] = [
   { id: 'FSC Case Number', label: 'FSC Case Number', visible: true, width: 150, group: 'airtable' },
   { id: 'PRODUCT NAME (MAX 35 CHARACTERS)', label: 'Product Name', visible: true, width: 200, group: 'airtable' },
   // App columns
-  { id: 'PO', label: 'PO', visible: true, width: 100, group: 'app' },
-  { id: 'SO', label: 'SO', visible: true, width: 100, group: 'app' },
-  { id: 'SupplierInvoice', label: 'Supplier Invoice', visible: true, width: 150, group: 'app' },
-  { id: 'CustomerInvoice', label: 'Customer Invoice', visible: true, width: 150, group: 'app' },
-  { id: 'Completion', label: 'Completion', visible: true, width: 200, group: 'app' },
+  { id: 'app-PO', label: 'PO', visible: true, width: 100, group: 'app' },
+  { id: 'app-SO', label: 'SO', visible: true, width: 100, group: 'app' },
+  { id: 'app-SupplierInvoice', label: 'Supplier Invoice', visible: true, width: 150, group: 'app' },
+  { id: 'app-CustomerInvoice', label: 'Customer Invoice', visible: true, width: 150, group: 'app' },
+  { id: 'app-Completion', label: 'Completion', visible: true, width: 200, group: 'app' },
 ];
 
 export const columnPreferences = {
