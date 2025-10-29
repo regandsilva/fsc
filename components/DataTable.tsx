@@ -5,6 +5,7 @@ import { DocStatusIcons } from './DocStatusIcons';
 import { FileManagementRow } from './FileManagementRow';
 import { OneDriveService } from '../services/oneDriveService';
 import { LocalStorageService } from '../services/localStorageService';
+import { calculateBatchCompletion, getCompletionSummary } from '../utils/batchCompletion';
 
 interface DataTableProps {
   data: FscRecord[];
@@ -38,6 +39,62 @@ const folderMap: Record<DocType, string> = {
   [DocType.SO]: '2_SalesOrders',
   [DocType.SupplierInvoice]: '3_SupplierInvoices',
   [DocType.CustomerInvoice]: '4_CustomerInvoices',
+};
+
+interface BatchProgressBarProps {
+  record: FscRecord;
+  appSettings: AppSettings;
+  oneDriveService: OneDriveService | null;
+  localStorageService: LocalStorageService | null;
+}
+
+const BatchProgressBar: React.FC<BatchProgressBarProps> = ({
+  record,
+  appSettings,
+  oneDriveService,
+  localStorageService
+}) => {
+  const getUploadedCount = (batchNumber: string, docType: DocType): number => {
+    if (appSettings.storageMode === 'local' && localStorageService) {
+      return localStorageService.getUploadedFileCount(batchNumber, docType);
+    }
+    // OneDrive count logic would go here if needed
+    return 0;
+  };
+
+  const completion = calculateBatchCompletion(record, getUploadedCount);
+  const summary = getCompletionSummary(completion);
+
+  // Color based on completion percentage
+  let barColor = 'bg-red-500';
+  let bgColor = 'bg-red-100';
+  if (completion.percentage === 100) {
+    barColor = 'bg-green-500';
+    bgColor = 'bg-green-100';
+  } else if (completion.percentage >= 50) {
+    barColor = 'bg-yellow-500';
+    bgColor = 'bg-yellow-100';
+  }
+
+  return (
+    <div className="flex flex-col space-y-1">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-medium text-gray-700">
+          {completion.totalUploaded}/{completion.totalRequired}
+        </span>
+        <span className="text-gray-500">{completion.percentage}%</span>
+      </div>
+      <div className={`w-full ${bgColor} rounded-full h-2 overflow-hidden`}>
+        <div
+          className={`${barColor} h-2 rounded-full transition-all duration-300`}
+          style={{ width: `${completion.percentage}%` }}
+        />
+      </div>
+      <span className="text-xs text-gray-500 truncate" title={summary}>
+        {summary}
+      </span>
+    </div>
+  );
 };
 
 interface FileUploadCellProps {
@@ -329,6 +386,7 @@ export const DataTable: React.FC<DataTableProps> = ({
             <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">SO</th>
             <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier Invoice</th>
             <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Customer Invoice</th>
+            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Completion</th>
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
@@ -380,6 +438,14 @@ export const DataTable: React.FC<DataTableProps> = ({
                   localStorageService={localStorageService}
                   oneDriveBasePath={oneDriveBasePath}
                 />
+                <td className="px-6 py-4 text-sm text-gray-500">
+                  <BatchProgressBar
+                    record={record}
+                    appSettings={appSettings}
+                    oneDriveService={oneDriveService}
+                    localStorageService={localStorageService}
+                  />
+                </td>
               </tr>
             </React.Fragment>
           ))}
@@ -399,6 +465,15 @@ export const DataTable: React.FC<DataTableProps> = ({
              <div>
                 <p className="text-xs font-bold text-gray-500 uppercase">Attachments</p>
                 <DocStatusIcons files={managedFiles[record.id] || emptyFiles} />
+            </div>
+            <div>
+                <p className="text-xs font-bold text-gray-500 uppercase mb-2">Completion Status</p>
+                <BatchProgressBar
+                  record={record}
+                  appSettings={appSettings}
+                  oneDriveService={oneDriveService}
+                  localStorageService={localStorageService}
+                />
             </div>
             <button onClick={() => onToggleExpand(record.id)} className="w-full mt-4 flex items-center justify-center space-x-2 bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition">
               <FolderKanban className="h-5 w-5" />

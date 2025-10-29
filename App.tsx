@@ -9,6 +9,7 @@ import { FilterControls } from './components/FilterControls';
 import { OneDriveService } from './services/oneDriveService';
 import { LocalStorageService, ScanResult } from './services/localStorageService';
 import { electronStore } from './utils/electronStore';
+import { calculateBatchCompletion, hasMissingDocType } from './utils/batchCompletion';
 
 // A more robust date parser that handles both YYYY-MM-DD and D/M/YYYY formats.
 const parseDateToUTC = (dateStr: string): Date | null => {
@@ -79,6 +80,7 @@ const App: React.FC = () => {
   const [dateFilter, setDateFilter] = useState<DateFilter>({ operator: 'exact', date1: '', date2: '' });
   const [createdDateFilter, setCreatedDateFilter] = useState<DateFilter>({ operator: 'exact', date1: '', date2: '' });
   const [uploadStatusFilter, setUploadStatusFilter] = useState<'all' | 'complete' | 'partial' | 'none'>('all');
+  const [smartFilter, setSmartFilter] = useState<'all' | 'missing-po' | 'missing-so' | 'missing-supplier-inv' | 'missing-customer-inv' | 'complete' | 'incomplete'>('all');
   
   const debouncedTextFilter = useDebounce(textFilter, 300);
   
@@ -354,6 +356,37 @@ const App: React.FC = () => {
       });
     }
 
+    // Smart Filter - Filter by missing document types or completion status
+    if (smartFilter !== 'all') {
+      filteredItems = filteredItems.filter(record => {
+        const getUploadedCount = (batchNumber: string, docType: DocType): number => {
+          if (appSettings.storageMode === 'local' && localStorageServiceRef.current) {
+            return localStorageServiceRef.current.getUploadedFileCount(batchNumber, docType);
+          }
+          return 0;
+        };
+
+        const completion = calculateBatchCompletion(record, getUploadedCount);
+
+        switch (smartFilter) {
+          case 'complete':
+            return completion.isComplete;
+          case 'incomplete':
+            return !completion.isComplete;
+          case 'missing-po':
+            return hasMissingDocType(completion, DocType.PO);
+          case 'missing-so':
+            return hasMissingDocType(completion, DocType.SO);
+          case 'missing-supplier-inv':
+            return hasMissingDocType(completion, DocType.SupplierInvoice);
+          case 'missing-customer-inv':
+            return hasMissingDocType(completion, DocType.CustomerInvoice);
+          default:
+            return true;
+        }
+      });
+    }
+
     if (sortConfig.key !== null) {
       const key = sortConfig.key as keyof FscRecord;
       filteredItems.sort((a, b) => {
@@ -379,7 +412,7 @@ const App: React.FC = () => {
       });
     }
     return filteredItems;
-  }, [data, debouncedTextFilter, dateFilter, createdDateFilter, sortConfig, uploadStatusFilter, allManagedFiles, appSettings.storageMode]);
+  }, [data, debouncedTextFilter, dateFilter, createdDateFilter, sortConfig, uploadStatusFilter, smartFilter, allManagedFiles, appSettings.storageMode, localStorageServiceRef]);
 
   const requestSort = (key: keyof FscRecord) => {
     let direction: 'ascending' | 'descending' = 'ascending';
@@ -510,6 +543,8 @@ const App: React.FC = () => {
               setCreatedDateFilter={setCreatedDateFilter}
               uploadStatusFilter={uploadStatusFilter}
               setUploadStatusFilter={setUploadStatusFilter}
+              smartFilter={smartFilter}
+              setSmartFilter={setSmartFilter}
             />
             
             {/* Stats Summary */}
