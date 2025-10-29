@@ -6,7 +6,7 @@ import { FileManagementRow } from './FileManagementRow';
 import { OneDriveService } from '../services/oneDriveService';
 import { LocalStorageService } from '../services/localStorageService';
 import { calculateBatchCompletion, getCompletionSummary } from '../utils/batchCompletion';
-import { columnPreferences, ColumnPreferences, DocColumnId } from '../utils/columnPreferences';
+import { columnPreferences, ColumnPreferences, ColumnId, AirtableColumnId, AppColumnId } from '../utils/columnPreferences';
 
 interface DataTableProps {
   data: FscRecord[];
@@ -376,8 +376,12 @@ export const DataTable: React.FC<DataTableProps> = ({
     return String(content);
   };
 
-  const handleToggleColumnVisibility = (columnId: DocColumnId) => {
+  const handleToggleColumnVisibility = (columnId: ColumnId) => {
     setColumnPrefs(prev => columnPreferences.toggleVisibility(prev, columnId));
+  };
+
+  const handleUpdateColumnWidth = (columnId: ColumnId, width: number) => {
+    setColumnPrefs(prev => columnPreferences.updateWidth(prev, columnId, width));
   };
 
   const handleResetColumns = async () => {
@@ -385,13 +389,8 @@ export const DataTable: React.FC<DataTableProps> = ({
     setColumnPrefs(defaults);
   };
 
-  const handleColumnReorder = (fromIndex: number, toIndex: number) => {
-    // Simple reorder for the modal list display
-    const newColumns = [...columnPrefs.docColumns];
-    const [removed] = newColumns.splice(fromIndex, 1);
-    newColumns.splice(toIndex, 0, removed);
-    setColumnPrefs({ docColumns: newColumns });
-  };
+  const airtableColumns = columnPreferences.getAirtableColumns(columnPrefs);
+  const appColumns = columnPreferences.getAppColumns(columnPrefs);
 
   return (
     <div className="overflow-x-auto">
@@ -409,7 +408,7 @@ export const DataTable: React.FC<DataTableProps> = ({
       {/* Column Settings Modal */}
       {showColumnSettings && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[80vh] overflow-y-auto">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[85vh] overflow-y-auto">
             <div className="p-6">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-semibold text-gray-900">Customize Columns</h3>
@@ -423,25 +422,113 @@ export const DataTable: React.FC<DataTableProps> = ({
                 </button>
               </div>
 
-              <div className="mb-4">
-                <p className="text-sm text-gray-600 mb-3">
-                  Show/hide document columns
-                </p>
-                <div className="space-y-2">
-                  {columnPrefs.docColumns.map((col, index) => (
+              <p className="text-sm text-gray-600 mb-4">
+                Show/hide columns and adjust their width
+              </p>
+
+              {/* Airtable Columns Section */}
+              <div className="mb-6">
+                <h4 className="text-md font-semibold text-gray-800 mb-3 flex items-center">
+                  <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs mr-2">Airtable</span>
+                  Data Columns
+                </h4>
+                <div className="space-y-3">
+                  {airtableColumns.map((col) => (
                     <div
                       key={col.id}
-                      className="flex items-center space-x-3 p-2 bg-gray-50 rounded hover:bg-gray-100"
+                      className="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition"
                     >
-                      <input
-                        type="checkbox"
-                        checked={col.visible}
-                        onChange={() => handleToggleColumnVisibility(col.id)}
-                        className="h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
-                      />
-                      <label className="flex-1 text-sm text-gray-700 cursor-pointer" onClick={() => handleToggleColumnVisibility(col.id)}>
-                        {col.label}
-                      </label>
+                      <div className="flex items-center space-x-3 mb-2">
+                        <input
+                          type="checkbox"
+                          checked={col.visible}
+                          onChange={() => handleToggleColumnVisibility(col.id)}
+                          className="h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
+                        />
+                        <label 
+                          className="flex-1 text-sm font-medium text-gray-700 cursor-pointer" 
+                          onClick={() => handleToggleColumnVisibility(col.id)}
+                        >
+                          {col.label}
+                        </label>
+                        <span className="text-xs text-gray-500">{col.width}px</span>
+                      </div>
+                      {col.visible && (
+                        <div className="ml-7 flex items-center space-x-3">
+                          <label className="text-xs text-gray-600 w-12">Width:</label>
+                          <input
+                            type="range"
+                            min="80"
+                            max="400"
+                            step="10"
+                            value={col.width}
+                            onChange={(e) => handleUpdateColumnWidth(col.id, parseInt(e.target.value))}
+                            className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                          />
+                          <input
+                            type="number"
+                            min="80"
+                            max="400"
+                            value={col.width}
+                            onChange={(e) => handleUpdateColumnWidth(col.id, parseInt(e.target.value))}
+                            className="w-16 px-2 py-1 text-xs border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* App Columns Section */}
+              <div className="mb-6">
+                <h4 className="text-md font-semibold text-gray-800 mb-3 flex items-center">
+                  <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs mr-2">App</span>
+                  Document Columns
+                </h4>
+                <div className="space-y-3">
+                  {appColumns.map((col) => (
+                    <div
+                      key={col.id}
+                      className="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition"
+                    >
+                      <div className="flex items-center space-x-3 mb-2">
+                        <input
+                          type="checkbox"
+                          checked={col.visible}
+                          onChange={() => handleToggleColumnVisibility(col.id)}
+                          className="h-4 w-4 text-green-600 rounded focus:ring-green-500"
+                        />
+                        <label 
+                          className="flex-1 text-sm font-medium text-gray-700 cursor-pointer" 
+                          onClick={() => handleToggleColumnVisibility(col.id)}
+                        >
+                          {col.label}
+                        </label>
+                        <span className="text-xs text-gray-500">{col.width}px</span>
+                      </div>
+                      {col.visible && (
+                        <div className="ml-7 flex items-center space-x-3">
+                          <label className="text-xs text-gray-600 w-12">Width:</label>
+                          <input
+                            type="range"
+                            min="80"
+                            max="400"
+                            step="10"
+                            value={col.width}
+                            onChange={(e) => handleUpdateColumnWidth(col.id, parseInt(e.target.value))}
+                            className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                          />
+                          <input
+                            type="number"
+                            min="80"
+                            max="400"
+                            value={col.width}
+                            onChange={(e) => handleUpdateColumnWidth(col.id, parseInt(e.target.value))}
+                            className="w-16 px-2 py-1 text-xs border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -470,113 +557,154 @@ export const DataTable: React.FC<DataTableProps> = ({
       <table className="min-w-full divide-y divide-gray-200 hidden md:table">
         <thead className="bg-gray-50">
           <tr>
-            {displayHeaders.map(header => (
-              <th 
-                key={header} 
-                scope="col" 
-                className={`px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-move select-none transition-colors ${
-                  dragOverColumn === header ? 'bg-blue-100' : ''
-                } ${
-                  draggedColumn === header ? 'opacity-50' : ''
-                }`}
-                draggable
-                onDragStart={(e) => handleDragStart(e, header)}
-                onDragOver={(e) => handleDragOver(e, header)}
-                onDragLeave={handleDragLeave}
-                onDrop={(e) => handleDrop(e, header)}
-                onDragEnd={handleDragEnd}
-              >
-                <button className="flex items-center group w-full" onClick={() => requestSort(header)}>
-                  <span className="mr-1">⋮⋮</span>
-                  <span>{header}</span>
-                  {getSortIcon(header)}
-                </button>
-              </th>
-            ))}
-            {columnPrefs.docColumns.find(c => c.id === 'PO')?.visible && (
-              <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">PO</th>
-            )}
-            {columnPrefs.docColumns.find(c => c.id === 'SO')?.visible && (
-              <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">SO</th>
-            )}
-            {columnPrefs.docColumns.find(c => c.id === 'SupplierInvoice')?.visible && (
-              <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier Invoice</th>
-            )}
-            {columnPrefs.docColumns.find(c => c.id === 'CustomerInvoice')?.visible && (
-              <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Customer Invoice</th>
-            )}
-            {columnPrefs.docColumns.find(c => c.id === 'Completion')?.visible && (
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Completion</th>
-            )}
+            {displayHeaders.map(header => {
+              const colPref = columnPreferences.getColumn(columnPrefs, header as AirtableColumnId);
+              if (!colPref?.visible) return null;
+              
+              return (
+                <th 
+                  key={header} 
+                  scope="col" 
+                  style={{ width: `${colPref.width}px`, minWidth: `${colPref.width}px` }}
+                  className={`px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-move select-none transition-colors ${
+                    dragOverColumn === header ? 'bg-blue-100' : ''
+                  } ${
+                    draggedColumn === header ? 'opacity-50' : ''
+                  }`}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, header)}
+                  onDragOver={(e) => handleDragOver(e, header)}
+                  onDragLeave={handleDragLeave}
+                  onDrop={(e) => handleDrop(e, header)}
+                  onDragEnd={handleDragEnd}
+                >
+                  <button className="flex items-center group w-full" onClick={() => requestSort(header)}>
+                    <span className="mr-1">⋮⋮</span>
+                    <span>{header}</span>
+                    {getSortIcon(header)}
+                  </button>
+                </th>
+              );
+            })}
+            {(() => {
+              const poCol = columnPreferences.getColumn(columnPrefs, 'PO');
+              return poCol?.visible && (
+                <th scope="col" style={{ width: `${poCol.width}px`, minWidth: `${poCol.width}px` }} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">PO</th>
+              );
+            })()}
+            {(() => {
+              const soCol = columnPreferences.getColumn(columnPrefs, 'SO');
+              return soCol?.visible && (
+                <th scope="col" style={{ width: `${soCol.width}px`, minWidth: `${soCol.width}px` }} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">SO</th>
+              );
+            })()}
+            {(() => {
+              const supplierCol = columnPreferences.getColumn(columnPrefs, 'SupplierInvoice');
+              return supplierCol?.visible && (
+                <th scope="col" style={{ width: `${supplierCol.width}px`, minWidth: `${supplierCol.width}px` }} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier Invoice</th>
+              );
+            })()}
+            {(() => {
+              const customerCol = columnPreferences.getColumn(columnPrefs, 'CustomerInvoice');
+              return customerCol?.visible && (
+                <th scope="col" style={{ width: `${customerCol.width}px`, minWidth: `${customerCol.width}px` }} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Customer Invoice</th>
+              );
+            })()}
+            {(() => {
+              const completionCol = columnPreferences.getColumn(columnPrefs, 'Completion');
+              return completionCol?.visible && (
+                <th scope="col" style={{ width: `${completionCol.width}px`, minWidth: `${completionCol.width}px` }} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Completion</th>
+              );
+            })()}
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
           {data.map((record) => (
             <React.Fragment key={record.id}>
               <tr className="hover:bg-gray-50">
-                {displayHeaders.map(header => (
-                  <td key={header} className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {renderCellContent(record[header], header)}
-                  </td>
-                ))}
-                {columnPrefs.docColumns.find(c => c.id === 'PO')?.visible && (
-                  <FileUploadCell
-                    record={record}
-                    docType={DocType.PO}
-                    files={managedFiles[record.id]?.[DocType.PO] || []}
-                    onFileAdd={fileHandlers.add}
-                    appSettings={appSettings}
-                    oneDriveService={oneDriveService}
-                    localStorageService={localStorageService}
-                    oneDriveBasePath={oneDriveBasePath}
-                  />
-                )}
-                {columnPrefs.docColumns.find(c => c.id === 'SO')?.visible && (
-                  <FileUploadCell
-                    record={record}
-                    docType={DocType.SO}
-                    files={managedFiles[record.id]?.[DocType.SO] || []}
-                    onFileAdd={fileHandlers.add}
-                    appSettings={appSettings}
-                    oneDriveService={oneDriveService}
-                    localStorageService={localStorageService}
-                    oneDriveBasePath={oneDriveBasePath}
-                  />
-                )}
-                {columnPrefs.docColumns.find(c => c.id === 'SupplierInvoice')?.visible && (
-                  <FileUploadCell
-                    record={record}
-                    docType={DocType.SupplierInvoice}
-                    files={managedFiles[record.id]?.[DocType.SupplierInvoice] || []}
-                    onFileAdd={fileHandlers.add}
-                    appSettings={appSettings}
-                    oneDriveService={oneDriveService}
-                    localStorageService={localStorageService}
-                    oneDriveBasePath={oneDriveBasePath}
-                  />
-                )}
-                {columnPrefs.docColumns.find(c => c.id === 'CustomerInvoice')?.visible && (
-                  <FileUploadCell
-                    record={record}
-                    docType={DocType.CustomerInvoice}
-                    files={managedFiles[record.id]?.[DocType.CustomerInvoice] || []}
-                    onFileAdd={fileHandlers.add}
-                    appSettings={appSettings}
-                    oneDriveService={oneDriveService}
-                    localStorageService={localStorageService}
-                    oneDriveBasePath={oneDriveBasePath}
-                  />
-                )}
-                {columnPrefs.docColumns.find(c => c.id === 'Completion')?.visible && (
-                  <td className="px-6 py-4 text-sm text-gray-500">
-                    <BatchProgressBar
+                {displayHeaders.map(header => {
+                  const colPref = columnPreferences.getColumn(columnPrefs, header as AirtableColumnId);
+                  if (!colPref?.visible) return null;
+                  
+                  return (
+                    <td key={header} style={{ width: `${colPref.width}px`, minWidth: `${colPref.width}px` }} className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {renderCellContent(record[header], header)}
+                    </td>
+                  );
+                })}
+                {(() => {
+                  const poCol = columnPreferences.getColumn(columnPrefs, 'PO');
+                  return poCol?.visible && (
+                    <FileUploadCell
                       record={record}
+                      docType={DocType.PO}
+                      files={managedFiles[record.id]?.[DocType.PO] || []}
+                      onFileAdd={fileHandlers.add}
                       appSettings={appSettings}
                       oneDriveService={oneDriveService}
                       localStorageService={localStorageService}
+                      oneDriveBasePath={oneDriveBasePath}
                     />
-                  </td>
-                )}
+                  );
+                })()}
+                {(() => {
+                  const soCol = columnPreferences.getColumn(columnPrefs, 'SO');
+                  return soCol?.visible && (
+                    <FileUploadCell
+                      record={record}
+                      docType={DocType.SO}
+                      files={managedFiles[record.id]?.[DocType.SO] || []}
+                      onFileAdd={fileHandlers.add}
+                      appSettings={appSettings}
+                      oneDriveService={oneDriveService}
+                      localStorageService={localStorageService}
+                      oneDriveBasePath={oneDriveBasePath}
+                    />
+                  );
+                })()}
+                {(() => {
+                  const supplierCol = columnPreferences.getColumn(columnPrefs, 'SupplierInvoice');
+                  return supplierCol?.visible && (
+                    <FileUploadCell
+                      record={record}
+                      docType={DocType.SupplierInvoice}
+                      files={managedFiles[record.id]?.[DocType.SupplierInvoice] || []}
+                      onFileAdd={fileHandlers.add}
+                      appSettings={appSettings}
+                      oneDriveService={oneDriveService}
+                      localStorageService={localStorageService}
+                      oneDriveBasePath={oneDriveBasePath}
+                    />
+                  );
+                })()}
+                {(() => {
+                  const customerCol = columnPreferences.getColumn(columnPrefs, 'CustomerInvoice');
+                  return customerCol?.visible && (
+                    <FileUploadCell
+                      record={record}
+                      docType={DocType.CustomerInvoice}
+                      files={managedFiles[record.id]?.[DocType.CustomerInvoice] || []}
+                      onFileAdd={fileHandlers.add}
+                      appSettings={appSettings}
+                      oneDriveService={oneDriveService}
+                      localStorageService={localStorageService}
+                      oneDriveBasePath={oneDriveBasePath}
+                    />
+                  );
+                })()}
+                {(() => {
+                  const completionCol = columnPreferences.getColumn(columnPrefs, 'Completion');
+                  return completionCol?.visible && (
+                    <td style={{ width: `${completionCol.width}px`, minWidth: `${completionCol.width}px` }} className="px-6 py-4 text-sm text-gray-500">
+                      <BatchProgressBar
+                        record={record}
+                        appSettings={appSettings}
+                        oneDriveService={oneDriveService}
+                        localStorageService={localStorageService}
+                      />
+                    </td>
+                  );
+                })()}
               </tr>
             </React.Fragment>
           ))}
@@ -587,12 +715,17 @@ export const DataTable: React.FC<DataTableProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:hidden">
         {data.map((record) => (
           <div key={record.id} className="bg-white rounded-lg shadow p-4 space-y-3 border border-gray-200">
-            {displayHeaders.map(header => (
-              <div key={header}>
-                <p className="text-xs font-bold text-gray-500 uppercase">{header}</p>
-                <p className="text-sm text-gray-800">{renderCellContent(record[header], header) || 'N/A'}</p>
-              </div>
-            ))}
+            {displayHeaders.map(header => {
+              const colPref = columnPreferences.getColumn(columnPrefs, header as AirtableColumnId);
+              if (!colPref?.visible) return null;
+              
+              return (
+                <div key={header}>
+                  <p className="text-xs font-bold text-gray-500 uppercase">{header}</p>
+                  <p className="text-sm text-gray-800">{renderCellContent(record[header], header) || 'N/A'}</p>
+                </div>
+              );
+            })}
              <div>
                 <p className="text-xs font-bold text-gray-500 uppercase">Attachments</p>
                 <DocStatusIcons files={managedFiles[record.id] || emptyFiles} />
