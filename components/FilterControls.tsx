@@ -143,7 +143,7 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
 
                 {/* Text Search */}
                 <div>
-                    <label htmlFor="text-search" className="block text-sm font-medium text-gray-700">
+                    <label htmlFor="text-search" className="block text-sm font-medium text-gray-700 mb-1">
                         Search
                     </label>
                     <input
@@ -152,21 +152,21 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
                         placeholder="Search across all fields..."
                         value={textFilter}
                         onChange={(e) => setTextFilter(e.target.value)}
-                        className="mt-1 w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                     />
                 </div>
                 
                 {/* FSC Approval Date Filter */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
-                        <label htmlFor="date-operator" className="block text-sm font-medium text-gray-700">
+                        <label htmlFor="date-operator" className="block text-sm font-medium text-gray-700 mb-1">
                             FSC Approval Date
                         </label>
                         <select
                             id="date-operator"
                             value={dateFilter.operator}
                             onChange={handleOperatorChange}
-                            className="mt-1 w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                         >
                             <option value="exact">Exactly on</option>
                             <option value="before">On or Before</option>
@@ -175,37 +175,42 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
                         </select>
                     </div>
                     
-                    <div className={`${dateFilter.operator === 'between' ? 'md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-2' : ''}`}>
-                        <input
-                            type="date"
-                            value={dateFilter.date1}
-                            onChange={handleDate1Change}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                            aria-label="FSC Approval start date"
-                        />
-                        {dateFilter.operator === 'between' && (
+                    <div className={dateFilter.operator === 'between' ? 'md:col-span-2' : ''}>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            {dateFilter.operator === 'between' ? 'Date Range' : 'Date'}
+                        </label>
+                        <div className={dateFilter.operator === 'between' ? 'grid grid-cols-1 sm:grid-cols-2 gap-2' : ''}>
                             <input
                                 type="date"
-                                value={dateFilter.date2}
-                                onChange={handleDate2Change}
+                                value={dateFilter.date1}
+                                onChange={handleDate1Change}
                                 className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                                aria-label="FSC Approval end date"
+                                aria-label="FSC Approval start date"
                             />
-                        )}
+                            {dateFilter.operator === 'between' && (
+                                <input
+                                    type="date"
+                                    value={dateFilter.date2}
+                                    onChange={handleDate2Change}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                                    aria-label="FSC Approval end date"
+                                />
+                            )}
+                        </div>
                     </div>
                 </div>
 
                 {/* Created Date Filter */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
-                        <label htmlFor="created-date-operator" className="block text-sm font-medium text-gray-700">
+                        <label htmlFor="created-date-operator" className="block text-sm font-medium text-gray-700 mb-1">
                             Created Date
                         </label>
                         <select
                             id="created-date-operator"
                             value={createdDateFilter.operator}
                             onChange={handleCreatedOperatorChange}
-                            className="mt-1 w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                         >
                             <option value="exact">Exactly on</option>
                             <option value="before">On or Before</option>
@@ -214,23 +219,28 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
                         </select>
                     </div>
                     
-                    <div className={`${createdDateFilter.operator === 'between' ? 'md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-2' : ''}`}>
-                        <input
-                            type="date"
-                            value={createdDateFilter.date1}
-                            onChange={handleCreatedDate1Change}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                            aria-label="Created start date"
-                        />
-                        {createdDateFilter.operator === 'between' && (
+                    <div className={createdDateFilter.operator === 'between' ? 'md:col-span-2' : ''}>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            {createdDateFilter.operator === 'between' ? 'Date Range' : 'Date'}
+                        </label>
+                        <div className={createdDateFilter.operator === 'between' ? 'grid grid-cols-1 sm:grid-cols-2 gap-2' : ''}>
                             <input
                                 type="date"
-                                value={createdDateFilter.date2}
-                                onChange={handleCreatedDate2Change}
+                                value={createdDateFilter.date1}
+                                onChange={handleCreatedDate1Change}
                                 className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                                aria-label="Created end date"
+                                aria-label="Created start date"
                             />
-                        )}
+                            {createdDateFilter.operator === 'between' && (
+                                <input
+                                    type="date"
+                                    value={createdDateFilter.date2}
+                                    onChange={handleCreatedDate2Change}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                                    aria-label="Created end date"
+                                />
+                            )}
+                        </div>
                     </div>
                 </div>
 
