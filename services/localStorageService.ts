@@ -35,10 +35,17 @@ export class LocalStorageService {
         if (content) {
           const history = JSON.parse(content);
           if (history && Array.isArray(history)) {
-            this.uploadHistory = new Map(history.map((item: UploadedFileRecord) => [
-              this.getFileKey(item.batchNumber, item.docType, item.fileName),
-              item
-            ]));
+            this.uploadHistory = new Map(history.map((item: any) => {
+              // Ensure batchNumber is always a string
+              const normalizedItem: UploadedFileRecord = {
+                ...item,
+                batchNumber: String(item.batchNumber)
+              };
+              return [
+                this.getFileKey(normalizedItem.batchNumber, normalizedItem.docType, normalizedItem.fileName),
+                normalizedItem
+              ];
+            }));
             console.log(`✅ Loaded ${history.length} upload records from history`);
           }
         }
@@ -53,12 +60,19 @@ export class LocalStorageService {
         const fileHandle = await this.dirHandle.getFileHandle('.upload-history.json');
         const file = await fileHandle.getFile();
         const content = await file.text();
-        const history: UploadedFileRecord[] = JSON.parse(content);
+        const history: any[] = JSON.parse(content);
         if (Array.isArray(history)) {
-          this.uploadHistory = new Map(history.map((item: UploadedFileRecord) => [
-            this.getFileKey(item.batchNumber, item.docType, item.fileName),
-            item
-          ]));
+          this.uploadHistory = new Map(history.map((item: any) => {
+            // Ensure batchNumber is always a string
+            const normalizedItem: UploadedFileRecord = {
+              ...item,
+              batchNumber: String(item.batchNumber)
+            };
+            return [
+              this.getFileKey(normalizedItem.batchNumber, normalizedItem.docType, normalizedItem.fileName),
+              normalizedItem
+            ];
+          }));
           console.log(`✅ Loaded ${history.length} upload records from history (web)`);
         }
       } catch (_err) {
@@ -197,16 +211,16 @@ export class LocalStorageService {
   /**
    * Check if a file has already been uploaded
    */
-  public isFileUploaded(batchNumber: string, docType: DocType, fileName: string): boolean {
-    const key = this.getFileKey(batchNumber, docType, fileName);
+  public isFileUploaded(batchNumber: string | number, docType: DocType, fileName: string): boolean {
+    const key = this.getFileKey(String(batchNumber), docType, fileName);
     return this.uploadHistory.has(key);
   }
 
   /**
    * Get uploaded file info
    */
-  public getUploadedFile(batchNumber: string, docType: DocType, fileName: string): UploadedFileRecord | undefined {
-    const key = this.getFileKey(batchNumber, docType, fileName);
+  public getUploadedFile(batchNumber: string | number, docType: DocType, fileName: string): UploadedFileRecord | undefined {
+    const key = this.getFileKey(String(batchNumber), docType, fileName);
     return this.uploadHistory.get(key);
   }
 
@@ -251,8 +265,8 @@ export class LocalStorageService {
   /**
    * Check if a file exists in upload history
    */
-  private isFileInHistory(batchNumber: string, docType: DocType, fileName: string): boolean {
-    const key = this.getFileKey(batchNumber, docType, fileName);
+  private isFileInHistory(batchNumber: string | number, docType: DocType, fileName: string): boolean {
+    const key = this.getFileKey(String(batchNumber), docType, fileName);
     return this.uploadHistory.has(key);
   }
 
@@ -315,13 +329,14 @@ export class LocalStorageService {
     }
 
     const batchNumber = record['Batch number'] || 'NOBATCH';
+    const batchNumberStr = String(batchNumber); // Ensure it's always a string
     const fileName = this.generateFileName(record, docType, file.name, basePath);
     
     console.log('📁 Uploading to local storage:', {
-      batchNumber,
+      batchNumber: batchNumberStr,
       docType,
       fileName,
-      folderPath: isElectron ? this.generateFolderPath(basePath, batchNumber, docType) : `(web folder)/${batchNumber}/${docType}`,
+      folderPath: isElectron ? this.generateFolderPath(basePath, batchNumberStr, docType) : `(web folder)/${batchNumberStr}/${docType}`,
       fileSize: file.size
     });
     
@@ -330,13 +345,13 @@ export class LocalStorageService {
         // Read file as ArrayBuffer
         const arrayBuffer = await file.arrayBuffer();
         const buffer = new Uint8Array(arrayBuffer);
-        const folderPath = this.generateFolderPath(basePath, batchNumber, docType);
+        const folderPath = this.generateFolderPath(basePath, batchNumberStr, docType);
         console.log('💾 Calling Electron IPC to save file...');
         const savedPath = await (window as any).electron.saveFile(folderPath, fileName, buffer);
         console.log('✅ File saved successfully:', savedPath);
       } else {
         // Web write to selected directory
-        const targetDir = await this.ensureWebSubfolder(batchNumber, docType);
+        const targetDir = await this.ensureWebSubfolder(batchNumberStr, docType);
         const fileHandle = await targetDir.getFileHandle(fileName, { create: true });
         const writable = await fileHandle.createWritable();
         await writable.write(file);
@@ -345,13 +360,13 @@ export class LocalStorageService {
       }
 
       // Record the upload
-      const key = this.getFileKey(batchNumber, docType, fileName);
+      const key = this.getFileKey(batchNumberStr, docType, fileName);
       const uploadRecord: UploadedFileRecord = {
-        batchNumber,
+        batchNumber: batchNumberStr,
         docType,
         fileName,
         uploadedAt: new Date().toISOString(),
-        filePath: isElectron ? this.generateFolderPath(basePath, batchNumber, docType) + '/' + fileName : `${batchNumber}/${docType}/${fileName}`,
+        filePath: isElectron ? this.generateFolderPath(basePath, batchNumberStr, docType) + '/' + fileName : `${batchNumberStr}/${docType}/${fileName}`,
       };
 
       this.uploadHistory.set(key, uploadRecord);
@@ -367,18 +382,20 @@ export class LocalStorageService {
   /**
    * Get all uploaded files for a batch
    */
-  public getUploadedFilesForBatch(batchNumber: string): UploadedFileRecord[] {
+  public getUploadedFilesForBatch(batchNumber: string | number): UploadedFileRecord[] {
+    const batchStr = String(batchNumber); // Ensure string comparison
     return Array.from(this.uploadHistory.values()).filter(
-      record => record.batchNumber === batchNumber
+      record => record.batchNumber === batchStr
     );
   }
 
   /**
    * Get count of uploaded files for a specific batch and doc type
    */
-  public getUploadedFileCount(batchNumber: string, docType: DocType): number {
+  public getUploadedFileCount(batchNumber: string | number, docType: DocType): number {
+    const batchStr = String(batchNumber); // Ensure string comparison
     return Array.from(this.uploadHistory.values()).filter(
-      record => record.batchNumber === batchNumber && record.docType === docType
+      record => record.batchNumber === batchStr && record.docType === docType
     ).length;
   }
 
