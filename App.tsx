@@ -7,7 +7,7 @@ import { fetchFscRecords } from './services/airtableService';
 import { useDebounce } from './hooks/useDebounce';
 import { FilterControls } from './components/FilterControls';
 import { OneDriveService } from './services/oneDriveService';
-import { LocalStorageService } from './services/localStorageService';
+import { LocalStorageService, ScanResult } from './services/localStorageService';
 import { electronStore } from './utils/electronStore';
 
 // A more robust date parser that handles both YYYY-MM-DD and D/M/YYYY formats.
@@ -190,6 +190,27 @@ const App: React.FC = () => {
         await oneDriveServiceRef.current.logout();
         setAuthState({ isAuthenticated: false, user: null, error: null, loading: false });
     }
+  };
+
+  const handleScanAndRebuild = async () => {
+    if (appSettings.storageMode !== 'local' || !localStorageServiceRef.current) {
+      throw new Error('Scan & Rebuild is only available for local storage mode');
+    }
+
+    // Create a set of valid batch numbers from current Airtable data
+    const validBatchNumbers = new Set(
+      data.map(record => String(record['Batch number']))
+    );
+
+    // Call the scan method with progress callback
+    return await localStorageServiceRef.current.scanAndRebuildHistory(
+      appSettings.localStoragePath,
+      validBatchNumbers,
+      (progress) => {
+        console.log('Scan progress:', progress);
+        // Progress updates are handled by SettingsPanel internally
+      }
+    );
   };
 
 
@@ -469,6 +490,7 @@ const App: React.FC = () => {
         authState={authState}
         onLogin={handleLogin}
         onLogout={handleLogout}
+        onScanAndRebuild={appSettings.storageMode === 'local' ? handleScanAndRebuild : undefined}
       />
 
       <main className="p-4 sm:p-6 lg:p-8">

@@ -9,6 +9,25 @@ export interface UploadedFileRecord {
   filePath: string;
 }
 
+export interface ScanProgress {
+  status: 'scanning' | 'validating' | 'complete' | 'error';
+  currentFolder?: string;
+  scannedCount: number;
+  totalFolders?: number;
+  message: string;
+}
+
+export interface ScanResult {
+  success: boolean;
+  filesFound: number;
+  newEntriesAdded: number;
+  orphanedFiles: string[]; // Files in unknown batches
+  existingEntriesPreserved: number;
+  errors: string[];
+  backupCreated: boolean;
+  backupPath?: string;
+}
+
 /**
  * Local storage service for saving files to the local PC.
  * Uses Electron IPC to interact with the file system.
@@ -282,7 +301,6 @@ export class LocalStorageService {
     return `${normalizedBase}/${sanitizeBatch}/${sanitizeDocType}`;
   }
 
-  // Web helpers using the File System Access API
   private async ensureWebSubfolder(batchNumber: string, docType: DocType): Promise<FileSystemDirectoryHandle> {
     if (!this.dirHandle) throw new Error('No folder selected. Click Browse to choose a base folder.');
     
@@ -307,6 +325,259 @@ export class LocalStorageService {
     const batchDir = await this.dirHandle.getDirectoryHandle(sanitizeBatch, { create: true });
     const typeDir = await batchDir.getDirectoryHandle(sanitizeDocType, { create: true });
     return typeDir;
+  }
+
+  /**
+   * Scan all folders and rebuild upload history from actual files on disk
+   * @param basePath - The base folder path to scan (Electron only, pass empty string for web)
+   * @param validBatchNumbers - Optional set of valid batch numbers from Airtable to validate against
+   * @param onProgress - Optional callback for progress updates
+   * @returns ScanResult with details about the scan
+   */
+  public async scanAndRebuildHistory(
+    basePath: string,
+    validBatchNumbers?: Set<string>,
+    onProgress?: (progress: ScanProgress) => void
+  ): Promise<ScanResult> {
+    const isElectron = typeof window !== 'undefined' && (window as any).electron;
+    
+    // For now, only support web mode with File System Access API
+    if (isElectron) {
+      return {
+        success: false,
+        filesFound: 0,
+        newEntriesAdded: 0,
+        orphanedFiles: [],
+        existingEntriesPreserved: 0,
+        errors: ['Scan & Rebuild for Electron mode coming soon. Currently only supported for web browser with File System Access API.'],
+        backupCreated: false,
+      };
+    }
+
+    if (!this.dirHandle) {
+      return {
+        success: false,
+        filesFound: 0,
+        newEntriesAdded: 0,
+        orphanedFiles: [],
+        existingEntriesPreserved: 0,
+        errors: ['No folder selected. Please select a folder in Settings first.'],
+        backupCreated: false,
+      };
+    }
+
+    const result: ScanResult = {
+      success: false,
+      filesFound: 0,
+      newEntriesAdded: 0,
+      orphanedFiles: [],
+      existingEntriesPreserved: 0,
+      errors: [],
+      backupCreated: false,
+    };
+
+    try {
+      // Step 1: Create backup of existing history
+      onProgress?.({
+        status: 'scanning',
+        message: 'Creating backup of existing upload history...',
+        scannedCount: 0,
+      });
+
+      // Save backup of existing history
+      const existingHistory = new Map(this.uploadHistory);
+      result.existingEntriesPreserved = existingHistory.size;
+      
+      if (existingHistory.size > 0) {
+        try {
+          const backupData = JSON.stringify(Array.from(existingHistory.values()), null, 2);
+          const backupFileName = `.upload-history.backup-${Date.now()}.json`;
+          const backupHandle = await this.dirHandle.getFileHandle(backupFileName, { create: true });
+          const writable = await backupHandle.createWritable();
+          await writable.write(new Blob([backupData], { type: 'application/json' }));
+          await writable.close();
+          result.backupCreated = true;
+          result.backupPath = backupFileName;
+          console.log('✅ Backup created:', backupFileName);
+        } catch (e) {
+          console.warn('Could not create backup:', e);
+        }
+      }
+
+      // Step 2: Clear and prepare for rebuild
+      this.uploadHistory.clear();
+
+      onProgress?.({
+        status: 'scanning',
+        message: 'Scanning folders for uploaded files...',
+        scannedCount: 0,
+      });
+
+      // Step 3: Scan the folder using File System Access API
+      const scannedFiles: Array<{
+        batchNumber: string;
+        docType: DocType;
+        fileName: string;
+        filePath: string;
+        lastModified: Date;
+      }> = [];
+
+      // Request permission before scanning
+      try {
+        // @ts-ignore
+        const permission = await this.dirHandle.queryPermission({ mode: 'readwrite' });
+        if (permission !== 'granted') {
+          // @ts-ignore
+          const newPermission = await this.dirHandle.requestPermission({ mode: 'readwrite' });
+          if (newPermission !== 'granted') {
+            throw new Error('Permission denied to scan folder');
+          }
+        }
+      } catch (e) {
+        throw new Error('Permission denied to scan folder. Please re-select the folder in Settings.');
+      }
+
+      // Get list of batch folders
+      const batchFolders: string[] = [];
+      // @ts-ignore
+      for await (const batchEntry of this.dirHandle.values()) {
+        if (batchEntry.kind === 'directory' && !batchEntry.name.startsWith('.')) {
+          batchFolders.push(batchEntry.name);
+        }
+      }
+
+      onProgress?.({
+        status: 'scanning',
+        message: `Found ${batchFolders.length} batch folders. Scanning...`,
+        scannedCount: 0,
+        totalFolders: batchFolders.length,
+      });
+
+      let scannedCount = 0;
+      // @ts-ignore
+      for await (const batchEntry of this.dirHandle.values()) {
+        if (batchEntry.kind !== 'directory' || batchEntry.name.startsWith('.')) continue;
+        
+        const batchNumber = batchEntry.name;
+        
+        onProgress?.({
+          status: 'scanning',
+          currentFolder: batchNumber,
+          message: `Scanning batch: ${batchNumber}...`,
+          scannedCount: scannedCount,
+          totalFolders: batchFolders.length,
+        });
+
+        try {
+          // @ts-ignore - Get doc type subfolders
+          for await (const docTypeEntry of batchEntry.values()) {
+            if (docTypeEntry.kind !== 'directory') continue;
+            
+            const docTypeName = docTypeEntry.name;
+            // Match to DocType enum
+            const matchedDocType = Object.values(DocType).find(
+              dt => dt === docTypeName || dt.replace(/[^a-zA-Z0-9-_\s]/g, '_') === docTypeName
+            );
+            
+            if (!matchedDocType) continue;
+
+            // @ts-ignore - Get files in doc type folder
+            for await (const fileEntry of docTypeEntry.values()) {
+              if (fileEntry.kind !== 'file') continue;
+              
+              const file = await fileEntry.getFile();
+              
+              scannedFiles.push({
+                batchNumber: batchNumber,
+                docType: matchedDocType,
+                fileName: fileEntry.name,
+                filePath: `${batchNumber}/${docTypeName}/${fileEntry.name}`,
+                lastModified: new Date(file.lastModified || Date.now()),
+              });
+            }
+          }
+        } catch (error) {
+          result.errors.push(`Error scanning batch ${batchNumber}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+
+        scannedCount++;
+      }
+
+      result.filesFound = scannedFiles.length;
+
+      // Step 4: Validate and add to history
+      onProgress?.({
+        status: 'validating',
+        message: `Validating ${scannedFiles.length} files...`,
+        scannedCount: scannedFiles.length,
+      });
+
+      for (const scannedFile of scannedFiles) {
+        // Check if batch is valid (if validation set provided)
+        if (validBatchNumbers && !validBatchNumbers.has(scannedFile.batchNumber)) {
+          result.orphanedFiles.push(
+            `${scannedFile.batchNumber}/${scannedFile.docType}/${scannedFile.fileName}`
+          );
+          continue; // Skip orphaned files
+        }
+
+        const key = this.getFileKey(scannedFile.batchNumber, scannedFile.docType, scannedFile.fileName);
+        
+        // Check if this file was in the old history
+        const existingRecord = existingHistory.get(key);
+        
+        const uploadRecord: UploadedFileRecord = {
+          batchNumber: scannedFile.batchNumber,
+          docType: scannedFile.docType,
+          fileName: scannedFile.fileName,
+          uploadedAt: existingRecord?.uploadedAt || scannedFile.lastModified.toISOString(),
+          filePath: scannedFile.filePath,
+        };
+
+        this.uploadHistory.set(key, uploadRecord);
+        
+        if (!existingRecord) {
+          result.newEntriesAdded++;
+        }
+      }
+
+      // Step 5: Save the rebuilt history
+      onProgress?.({
+        status: 'complete',
+        message: 'Saving rebuilt upload history...',
+        scannedCount: scannedFiles.length,
+      });
+
+      await this.saveUploadHistory('');
+
+      result.success = true;
+      
+      onProgress?.({
+        status: 'complete',
+        message: 'Scan complete!',
+        scannedCount: scannedFiles.length,
+      });
+
+      console.log('✅ Scan & Rebuild complete:', {
+        filesFound: result.filesFound,
+        newEntriesAdded: result.newEntriesAdded,
+        orphanedFiles: result.orphanedFiles.length,
+        existingPreserved: result.existingEntriesPreserved,
+      });
+
+    } catch (error) {
+      result.success = false;
+      result.errors.push(`Scan failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('❌ Scan & Rebuild failed:', error);
+      
+      onProgress?.({
+        status: 'error',
+        message: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        scannedCount: 0,
+      });
+    }
+
+    return result;
   }
 
   /**
