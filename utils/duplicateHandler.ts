@@ -9,6 +9,10 @@ export interface DuplicateFile {
   existingFileName: string;
   action: 'skip' | 'replace' | 'version';
   versionNumber?: number;
+  matchReason?: string; // Why it was detected as duplicate
+  contentHash?: string; // Hash of file content
+  sizeMatch?: boolean; // If file size matches
+  modifiedDate?: string; // Last modified date
 }
 
 export interface DuplicateDetectionResult {
@@ -71,14 +75,90 @@ export async function findNextVersion(
 }
 
 /**
- * Detect duplicate files in the upload plan
+ * Calculate SHA-256 hash of a file for duplicate detection
+ */
+async function calculateFileHash(file: File): Promise<string> {
+  try {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    return hashHex;
+  } catch (error) {
+    console.error('Error calculating file hash:', error);
+    return '';
+  }
+}
+
+/**
+ * Calculate a simple content similarity score based on file size
+ */
+function calculateSizeSimilarity(size1: number, size2: number): number {
+  if (size1 === size2) return 100;
+  const diff = Math.abs(size1 - size2);
+  const avg = (size1 + size2) / 2;
+  const similarity = Math.max(0, 100 - (diff / avg * 100));
+  return similarity;
+}
+
+/**
+ * Check if filename suggests it's the same document
+ */
+function analyzeNameSimilarity(name1: string, name2: string): {
+  isMatch: boolean;
+  confidence: number;
+  reason: string;
+} {
+  // Remove extensions for comparison
+  const getName = (fullName: string) => {
+    const lastDot = fullName.lastIndexOf('.');
+    return lastDot === -1 ? fullName : fullName.substring(0, lastDot);
+  };
+  
+  // Remove version numbers in parentheses like (1), (2), etc.
+  const removeParenthesesVersion = (name: string) => {
+    return name.replace(/\s*\(\d+\)$/, '');
+  };
+  
+  // Remove _v1, _v2 style versions
+  const removeUnderscoreVersion = (name: string) => {
+    return name.replace(/_v\d+$/, '');
+  };
+  
+  const baseName1 = removeParenthesesVersion(removeUnderscoreVersion(getName(name1).toLowerCase().replace(/[_\s-]+/g, '')));
+  const baseName2 = removeParenthesesVersion(removeUnderscoreVersion(getName(name2).toLowerCase().replace(/[_\s-]+/g, '')));
+  
+  // Exact match (ignoring case, separators, and version suffixes)
+  if (baseName1 === baseName2) {
+    return { isMatch: true, confidence: 100, reason: 'Identical filename (ignoring version)' };
+  }
+  
+  // Check if one contains the other
+  if (baseName1.includes(baseName2) || baseName2.includes(baseName1)) {
+    const longer = baseName1.length > baseName2.length ? baseName1 : baseName2;
+    const shorter = baseName1.length > baseName2.length ? baseName2 : baseName1;
+    const similarity = (shorter.length / longer.length) * 100;
+    
+    if (similarity > 80) {
+      return { isMatch: true, confidence: Math.round(similarity), reason: 'Similar filename' };
+    }
+  }
+  
+  return { isMatch: false, confidence: 0, reason: 'Different filename' };
+}
+
+/**
+ * Detect duplicate files in the upload plan with enhanced detection
+ */
+/**
+ * Detect duplicate files in the upload plan with enhanced detection
  */
 export async function detectDuplicates(
   uploadPlan: Map<string, Map<DocType, File[]>>,
   basePath: string,
   localStorageService: LocalStorageService
 ): Promise<DuplicateDetectionResult> {
-  console.log('🔍 detectDuplicates called');
+  console.log('🔍 detectDuplicates called (Enhanced version)');
   console.log('  LocalStorage service available:', !!localStorageService);
   console.log('  Base path:', basePath);
   
@@ -102,20 +182,55 @@ export async function detectDuplicates(
         
         console.log(`      Existing files in batch ${batchNumber}, docType ${docType}:`, existingFiles.map(f => f.fileName));
         
-        // Check if a file with the same original name exists
-        // The uploaded filename format is: "{batch} - {docType} - {originalName}"
-        const originalNamePattern = file.name.replace(/\.[^.]+$/, ''); // Remove extension
-        const isDuplicate = existingFiles.some(existing => {
-          // Check if existing filename contains the original filename
-          const match = existing.fileName.includes(file.name) || 
-                       existing.fileName.includes(originalNamePattern);
-          if (match) {
-            console.log(`      ✓ MATCH: ${existing.fileName} contains ${file.name}`);
-          }
-          return match;
-        });
+        let isDuplicate = false;
+        let matchReason = '';
+        let sizeMatch = false;
         
-        console.log(`      File: ${file.name} - isDuplicate: ${isDuplicate}`);
+        // Calculate hash for this file
+        const fileHash = await calculateFileHash(file);
+        
+        // Check each existing file
+        for (const existing of existingFiles) {
+          // Extract original filename from stored format: "{batch} - {docType} - {originalName}"
+          // Also handle version suffixes like "PO-1085 (9).pdf" -> "PO-1085.pdf"
+          const parts = existing.fileName.split(' - ');
+          let existingOriginalName = parts.length >= 3 ? parts.slice(2).join(' - ') : existing.fileName;
+          
+          // Remove version suffix in parentheses: "filename (2).pdf" -> "filename.pdf"
+          existingOriginalName = existingOriginalName.replace(/\s*\(\d+\)(\.[^.]+)$/, '$1');
+          
+          console.log(`        Comparing "${file.name}" with existing "${existingOriginalName}" (original: "${existing.fileName}")`);
+          
+          // 1. Check filename similarity
+          const nameSimilarity = analyzeNameSimilarity(file.name, existingOriginalName);
+          
+          // 2. Check file size
+          const sizeSimilarity = existing.fileSize ? calculateSizeSimilarity(file.size, existing.fileSize) : 0;
+          sizeMatch = sizeSimilarity > 95; // Consider 95%+ as size match
+          
+          // 3. Check content hash if available
+          const hashMatch = existing.contentHash && fileHash ? existing.contentHash === fileHash : false;
+          
+          // Determine if it's a duplicate based on multiple signals
+          if (hashMatch) {
+            isDuplicate = true;
+            matchReason = '🔒 Identical file content (hash match)';
+            console.log(`      ✓ HASH MATCH: ${file.name} === ${existingOriginalName}`);
+            break;
+          } else if (nameSimilarity.isMatch && sizeMatch) {
+            isDuplicate = true;
+            matchReason = `📄 ${nameSimilarity.reason} + identical size`;
+            console.log(`      ✓ NAME+SIZE MATCH: ${file.name} ~= ${existingOriginalName} (${nameSimilarity.confidence}% name, size ${file.size})`);
+            break;
+          } else if (nameSimilarity.isMatch && nameSimilarity.confidence >= 95) {
+            isDuplicate = true;
+            matchReason = `📄 ${nameSimilarity.reason}`;
+            console.log(`      ✓ NAME MATCH: ${file.name} ~= ${existingOriginalName} (${nameSimilarity.confidence}%)`);
+            break;
+          }
+        }
+        
+        console.log(`      File: ${file.name} - isDuplicate: ${isDuplicate}, reason: ${matchReason}`);
 
         if (isDuplicate) {
           duplicates.push({
@@ -124,6 +239,10 @@ export async function detectDuplicates(
             docType,
             existingFileName: file.name,
             action: 'skip', // Default action
+            matchReason,
+            contentHash: fileHash,
+            sizeMatch,
+            modifiedDate: new Date(file.lastModified).toISOString(),
           });
         } else {
           nonDuplicates.push({ file, batchNumber, docType });
@@ -143,19 +262,21 @@ export async function applyVersioning(
   duplicates: DuplicateFile[],
   basePath: string,
   localStorageService: LocalStorageService
-): Promise<Array<{ file: File; batchNumber: string; docType: DocType; versionedName?: string }>> {
-  const result: Array<{ file: File; batchNumber: string; docType: DocType; versionedName?: string }> = [];
+): Promise<Array<{ file: File; batchNumber: string; docType: DocType; versionedName?: string; forceReplace?: boolean }>> {
+  const result: Array<{ file: File; batchNumber: string; docType: DocType; versionedName?: string; forceReplace?: boolean }> = [];
 
   for (const duplicate of duplicates) {
     if (duplicate.action === 'skip') {
       // Skip this file
       continue;
     } else if (duplicate.action === 'replace') {
-      // Upload with original name (will overwrite)
+      // Upload with original name (will overwrite existing file)
+      console.log(`🔄 Replace mode: ${duplicate.file.name} will overwrite existing file`);
       result.push({
         file: duplicate.file,
         batchNumber: duplicate.batchNumber,
         docType: duplicate.docType,
+        forceReplace: true, // This flag tells uploadFile to replace the existing file
       });
     } else if (duplicate.action === 'version') {
       // Generate versioned filename

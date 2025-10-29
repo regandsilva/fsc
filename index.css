@@ -1,3 +1,17 @@
 /* Minimal stylesheet placeholder for GitHub Pages builds. */
 :root { color-scheme: light; }
 body { margin: 0; }
+
+/* Shimmer animation for progress bar */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite;
+}

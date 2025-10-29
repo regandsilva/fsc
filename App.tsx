@@ -4,11 +4,13 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { DataTable } from './components/DataTable';
 import { BulkUploadModal } from './components/BulkUploadModal';
 import { DuplicateResolutionModal } from './components/DuplicateResolutionModal';
+import { ScanModal } from './components/ScanModal';
+import { FolderViewModal } from './components/FolderViewModal';
 import { FscRecord, AppSettings, SortConfig, DateFilter, DocType, ManagedFile } from './types';
 import { fetchFscRecords } from './services/airtableService';
 import { useDebounce } from './hooks/useDebounce';
 import { FilterControls } from './components/FilterControls';
-import { LocalStorageService, ScanResult } from './services/localStorageService';
+import { LocalStorageService, ScanResult, ScanProgress } from './services/localStorageService';
 import { electronStore } from './utils/electronStore';
 import { calculateBatchCompletion, hasMissingDocType } from './utils/batchCompletion';
 import { filterPersistence } from './utils/filterPersistence';
@@ -91,6 +93,22 @@ const App: React.FC = () => {
   const [showDuplicateModal, setShowDuplicateModal] = useState<boolean>(false);
   const [pendingUploadPlan, setPendingUploadPlan] = useState<Map<string, Map<DocType, File[]>> | null>(null);
   const [detectedDuplicates, setDetectedDuplicates] = useState<DuplicateFile[]>([]);
+  const [pendingProgressCallback, setPendingProgressCallback] = useState<((current: number, total: number, fileName: string) => void) | null>(null);
+  
+  // Scan modal states
+  const [showScanModal, setShowScanModal] = useState<boolean>(false);
+  const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  
+  // Folder view modal states
+  const [showFolderViewModal, setShowFolderViewModal] = useState<boolean>(false);
+  const [folderViewData, setFolderViewData] = useState<{
+    batchNumber: string;
+    docType: string;
+    files: Array<{ name: string; size: number; lastModified: Date }>;
+    folderPath?: string;
+  } | null>(null);
   
   const localStorageServiceRef = useRef<LocalStorageService | null>(null);
 
@@ -191,15 +209,78 @@ const App: React.FC = () => {
       data.map(record => String(record['Batch number']))
     );
 
-    // Call the scan method with progress callback
-    return await localStorageServiceRef.current.scanAndRebuildHistory(
-      appSettings.localStoragePath,
-      validBatchNumbers,
-      (progress) => {
-        console.log('Scan progress:', progress);
-        // Progress updates are handled by SettingsPanel internally
+    // Open the scan modal and start scanning
+    setShowScanModal(true);
+    setIsScanning(true);
+    setScanProgress(null);
+    setScanResult(null);
+
+    try {
+      // Call the scan method with progress callback
+      const result = await localStorageServiceRef.current.scanAndRebuildHistory(
+        appSettings.localStoragePath,
+        validBatchNumbers,
+        (progress) => {
+          setScanProgress(progress);
+        }
+      );
+      
+      setScanResult(result);
+    } catch (error) {
+      console.error('Scan error:', error);
+      setError(error instanceof Error ? error.message : 'Scan failed');
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleDeleteDuplicateFiles = async (filesToDelete: Array<{ batchNumber: string; docType: string; fileName: string }>) => {
+    if (!localStorageServiceRef.current) {
+      throw new Error('Local storage not initialized');
+    }
+
+    try {
+      const result = await localStorageServiceRef.current.deleteDuplicateFiles(filesToDelete);
+      
+      if (result.success) {
+        // Re-run the scan to refresh the results
+        await handleScanAndRebuild();
+      } else {
+        setError(`Failed to delete some files: ${result.errors.join(', ')}`);
       }
-    );
+    } catch (error) {
+      console.error('Delete error:', error);
+      setError(error instanceof Error ? error.message : 'Failed to delete files');
+    }
+  };
+
+  const handleOpenFolder = async (batchNumber: string, docType: string) => {
+    if (!localStorageServiceRef.current) {
+      throw new Error('Local storage not initialized');
+    }
+
+    try {
+      const result = await localStorageServiceRef.current.openFolder(batchNumber, docType);
+      
+      // For web browsers, show the folder view modal
+      if (!result.isElectron && result.files) {
+        const folderPath = appSettings.localStoragePath 
+          ? `${appSettings.localStoragePath}\\${batchNumber}\\${docType}`
+          : undefined;
+          
+        setFolderViewData({
+          batchNumber,
+          docType,
+          files: result.files,
+          folderPath,
+        });
+        setShowFolderViewModal(true);
+      }
+      // For Electron, the folder is already opened in the system file explorer
+    } catch (error) {
+      console.error('Error opening folder:', error);
+      setError(error instanceof Error ? error.message : 'Failed to open folder');
+    }
   };
 
 
@@ -429,7 +510,10 @@ const App: React.FC = () => {
   };
 
   // Bulk upload handler with duplicate detection and actual file upload
-  const handleBulkUpload = async (uploadPlan: Map<string, Map<DocType, File[]>>) => {
+  const handleBulkUpload = async (
+    uploadPlan: Map<string, Map<DocType, File[]>>,
+    onProgress?: (current: number, total: number, fileName: string) => void
+  ) => {
     try {
       console.log('🔍 Starting duplicate detection...');
       console.log('📦 Upload plan:', uploadPlan);
@@ -448,20 +532,40 @@ const App: React.FC = () => {
       console.log('✅ Duplicate detection complete');
       console.log('🔄 Duplicates found:', duplicateResult.duplicates.length);
       console.log('📄 Duplicate files:', duplicateResult.duplicates);
+      console.log('✨ Non-duplicate files:', duplicateResult.nonDuplicates.length);
 
       // Step 2: If there are duplicates, show resolution modal
       if (duplicateResult.duplicates.length > 0) {
         console.log('🚨 Showing duplicate resolution modal');
         setDetectedDuplicates(duplicateResult.duplicates);
-        setPendingUploadPlan(uploadPlan);
-        setShowBulkUploadModal(false);
+        
+        // Store the progress callback for later use
+        setPendingProgressCallback(() => onProgress || null);
+        
+        // IMPORTANT: Build upload plan that includes non-duplicates
+        const planWithNonDuplicates = new Map<string, Map<DocType, File[]>>();
+        
+        // Add non-duplicate files to the plan
+        for (const nonDup of duplicateResult.nonDuplicates) {
+          if (!planWithNonDuplicates.has(nonDup.batchNumber)) {
+            planWithNonDuplicates.set(nonDup.batchNumber, new Map());
+          }
+          const batchMap = planWithNonDuplicates.get(nonDup.batchNumber)!;
+          if (!batchMap.has(nonDup.docType)) {
+            batchMap.set(nonDup.docType, []);
+          }
+          batchMap.get(nonDup.docType)!.push(nonDup.file);
+        }
+        
+        setPendingUploadPlan(planWithNonDuplicates);
+        // Don't close BulkUploadModal - it will show progress bar after resolution
         setShowDuplicateModal(true);
         return;
       }
 
       console.log('✨ No duplicates, proceeding with upload');
       // Step 3: No duplicates, proceed with upload
-      await performBulkUpload(uploadPlan);
+      await performBulkUpload(uploadPlan, onProgress);
       
     } catch (error) {
       console.error('Error during bulk upload:', error);
@@ -474,14 +578,32 @@ const App: React.FC = () => {
     if (!pendingUploadPlan || !localStorageServiceRef.current) return;
 
     setShowDuplicateModal(false);
+    // BulkUploadModal is still open, it will handle progress display
 
     try {
+      console.log('🔧 Processing duplicate resolutions...');
+      console.log('   Pending upload plan has:', pendingUploadPlan.size, 'batches');
+      
+      // Count non-duplicate files
+      let nonDuplicateCount = 0;
+      for (const docTypeMap of pendingUploadPlan.values()) {
+        for (const files of docTypeMap.values()) {
+          nonDuplicateCount += files.length;
+        }
+      }
+      console.log('   Non-duplicate files to upload:', nonDuplicateCount);
+      
       // Apply versioning to resolved duplicates
       const versionedFiles = await applyVersioning(
         resolvedDuplicates,
         appSettings.localStoragePath,
         localStorageServiceRef.current
       );
+
+      console.log('   Files after resolution (replace/version):', versionedFiles.length);
+
+      // Track which files should be force-replaced
+      const forceReplaceFiles = new Set<string>();
 
       // Add versioned files back to the upload plan
       for (const versionedFile of versionedFiles) {
@@ -493,15 +615,30 @@ const App: React.FC = () => {
           batchMap.set(versionedFile.docType, []);
         }
         batchMap.get(versionedFile.docType)!.push(versionedFile.file);
+        
+        // Track if this file should force-replace
+        if (versionedFile.forceReplace) {
+          forceReplaceFiles.add(versionedFile.file.name);
+          console.log(`   📝 Marked for replacement: ${versionedFile.file.name}`);
+        }
       }
 
-      // Perform the actual upload
-      await performBulkUpload(pendingUploadPlan);
+      // Count total files to upload
+      let totalToUpload = 0;
+      for (const docTypeMap of pendingUploadPlan.values()) {
+        for (const files of docTypeMap.values()) {
+          totalToUpload += files.length;
+        }
+      }
+      console.log('   Total files to upload:', totalToUpload);
+
+      // Perform the actual upload with the stored progress callback and replacement tracking
+      await performBulkUpload(pendingUploadPlan, pendingProgressCallback || undefined, forceReplaceFiles);
       
       // Clear pending state
       setPendingUploadPlan(null);
       setDetectedDuplicates([]);
-      setShowBulkUploadModal(false);
+      setPendingProgressCallback(null);
       
     } catch (error) {
       console.error('Error processing duplicates:', error);
@@ -511,7 +648,11 @@ const App: React.FC = () => {
   };
 
   // Actual upload function
-  const performBulkUpload = async (uploadPlan: Map<string, Map<DocType, File[]>>) => {
+  const performBulkUpload = async (
+    uploadPlan: Map<string, Map<DocType, File[]>>,
+    onProgress?: (current: number, total: number, fileName: string) => void,
+    forceReplaceFiles?: Set<string>
+  ) => {
     let totalFiles = 0;
     let uploadedFiles = 0;
     let errors: string[] = [];
@@ -538,15 +679,29 @@ const App: React.FC = () => {
       for (const [docType, files] of docTypeMap.entries()) {
         for (const file of files) {
           try {
+            // Report progress BEFORE uploading
+            if (onProgress) {
+              onProgress(uploadedFiles + 1, totalFiles, file.name);
+            }
+            
+            // Check if this file should force-replace an existing file
+            const shouldForceReplace = forceReplaceFiles?.has(file.name) || false;
+            
             // Upload using local storage
             if (localStorageServiceRef.current && appSettings.localStoragePath) {
-              await localStorageServiceRef.current.uploadFile(record, file, docType, appSettings.localStoragePath);
+              await localStorageServiceRef.current.uploadFile(
+                record, 
+                file, 
+                docType, 
+                appSettings.localStoragePath, 
+                shouldForceReplace
+              );
             } else {
               throw new Error('Local storage not configured');
             }
 
             uploadedFiles++;
-            console.log(`✅ Uploaded ${file.name} to batch ${batchNumber} (${uploadedFiles}/${totalFiles})`);
+            console.log(`✅ Uploaded ${file.name} to batch ${batchNumber} (${uploadedFiles}/${totalFiles})${shouldForceReplace ? ' [REPLACED]' : ''}`);
 
           } catch (error) {
             const errorMsg = `Failed to upload ${file.name} to batch ${batchNumber}: ${error instanceof Error ? error.message : 'Unknown error'}`;
@@ -557,18 +712,21 @@ const App: React.FC = () => {
       }
     }
 
-    // Show results
+    // Log results (don't show alert - it blocks the UI)
     if (errors.length > 0) {
-      const message = `Upload completed with errors:\n- ${uploadedFiles} files uploaded successfully\n- ${errors.length} files failed\n\nErrors:\n${errors.join('\n')}`;
-      alert(message);
+      console.error(`❌ Upload completed with errors: ${uploadedFiles} successful, ${errors.length} failed`);
+      console.error('Errors:', errors);
     } else {
-      alert(`✅ Successfully uploaded ${uploadedFiles} file${uploadedFiles > 1 ? 's' : ''}!`);
+      console.log(`✅ Successfully uploaded ${uploadedFiles} file${uploadedFiles > 1 ? 's' : ''}!`);
     }
 
     // Refresh data to update counts
     if (appSettings.apiKey && appSettings.baseId && appSettings.tableName) {
       handleFetchData();
     }
+    
+    // Return results for caller to handle
+    return { uploadedFiles, errors };
   };
 
   // Calculate statistics for filtered data using batch completion
@@ -621,6 +779,7 @@ const App: React.FC = () => {
         onToggleSettings={() => setIsSettingsOpen(!isSettingsOpen)}
         onRefresh={handleFetchData}
         isRefreshing={isLoading}
+        onScanAndRebuild={handleScanAndRebuild}
       />
       
       <SettingsPanel
@@ -735,6 +894,29 @@ const App: React.FC = () => {
                     setShowBulkUploadModal(true);
                   }}
                 />
+
+                {/* Scan and Rebuild Modal */}
+                <ScanModal
+                  isOpen={showScanModal}
+                  isScanning={isScanning}
+                  scanProgress={scanProgress}
+                  scanResult={scanResult}
+                  onClose={() => setShowScanModal(false)}
+                  onDeleteFiles={handleDeleteDuplicateFiles}
+                  onOpenFolder={handleOpenFolder}
+                />
+
+                {/* Folder View Modal (Web only) */}
+                {folderViewData && (
+                  <FolderViewModal
+                    isOpen={showFolderViewModal}
+                    batchNumber={folderViewData.batchNumber}
+                    docType={folderViewData.docType}
+                    files={folderViewData.files}
+                    folderPath={folderViewData.folderPath}
+                    onClose={() => setShowFolderViewModal(false)}
+                  />
+                )}
               </>
             )}
           </div>

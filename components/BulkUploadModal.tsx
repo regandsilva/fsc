@@ -3,13 +3,14 @@ import { Upload, FileCheck, AlertTriangle, CheckCircle, X, Sparkles, Ban, FileWa
 import { FscRecord, DocType, ManagedFile, AppSettings } from '../types';
 import { createBulkUploadPlan, FileAnalysis, getDocTypeLabel } from '../utils/aiFileAnalyzer';
 import { LocalStorageService } from '../services/localStorageService';
+import { SearchableDropdown } from './SearchableDropdown';
 
 
 interface BulkUploadModalProps {
   isOpen: boolean;
   onClose: () => void;
   records: FscRecord[];
-  onBulkUpload: (uploads: Map<string, Map<DocType, File[]>>) => Promise<void>;
+  onBulkUpload: (uploads: Map<string, Map<DocType, File[]>>, onProgress?: (current: number, total: number, fileName: string) => void) => Promise<void>;
   appSettings: AppSettings;
   localStorageService: LocalStorageService | null;
 
@@ -29,49 +30,91 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadProgressText, setUploadProgressText] = useState('');
   const [currentStep, setCurrentStep] = useState<'select' | 'review' | 'uploading' | 'complete'>('select');
   const [editedAnalyses, setEditedAnalyses] = useState<Map<string, { batch: string; docType: DocType; skipUpload?: boolean }>>(new Map());
+  const [duplicateFileNames, setDuplicateFileNames] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Check for duplicates after analysis
+  // Detect duplicates for preview purposes only (not for resolution)
   useEffect(() => {
-    if (!isOpen || !uploadPlan || !localStorageService) return;
-    
-    // Check if we've already checked duplicates for this plan
-    const hasCheckedDuplicates = uploadPlan.analyses.some(a => a.isDuplicate === true);
-    if (hasCheckedDuplicates) return;
-    
-    // Check each analysis for duplicates
-    let hasAnyDuplicates = false;
-    const updatedAnalyses = uploadPlan.analyses.map(analysis => {
-      if (analysis.matchedBatch && analysis.matchedDocType) {
-        const isDuplicate = localStorageService.isFileUploaded(
-          analysis.matchedBatch,
-          analysis.matchedDocType,
-          analysis.file.name
-        );
-        
-        if (isDuplicate) {
-          hasAnyDuplicates = true;
-          return {
-            ...analysis,
-            isDuplicate: true,
-            duplicateWarning: `⚠️ File "${analysis.file.name}" already exists. Upload will create a version (${analysis.file.name.replace(/(\.[^.]+)$/, '_v2$1')}).`
-          };
+    if (!uploadPlan || !localStorageService || !appSettings.localStoragePath) {
+      setDuplicateFileNames(new Set());
+      return;
+    }
+
+    const checkDuplicates = async () => {
+      const duplicates = new Set<string>();
+      
+      // Helper function to extract the base name from a formatted filename
+      // "6890 - Purchase Order - PO-1085.pdf" or "6890 - Purchase Order - PO-1085 (2).pdf" -> "PO-1085.pdf"
+      const extractBaseName = (fileName: string): string => {
+        // Remove version numbers like " (2)"
+        const withoutVersion = fileName.replace(/\s*\(\d+\)(\.[^.]+)$/, '$1');
+        // Extract the reference part after the last dash
+        const parts = withoutVersion.split(' - ');
+        if (parts.length >= 3) {
+          return parts[parts.length - 1].trim();
+        }
+        return fileName;
+      };
+
+      // Helper to normalize filename for comparison (remove extension, lowercase, trim)
+      const normalizeForComparison = (fileName: string): string => {
+        return fileName.replace(/\.[^.]+$/, '').toLowerCase().trim();
+      };
+      
+      for (const [batchNumber, docTypeMap] of uploadPlan.groupedByBatch) {
+        for (const [docType, files] of docTypeMap.entries()) {
+          // Get all uploaded files for this batch
+          const uploadedFiles = localStorageService.getUploadedFilesForBatch(batchNumber);
+          
+          // Filter by docType
+          const uploadedForDocType = uploadedFiles.filter(f => f.docType === docType);
+          
+          // Extract base names from all uploaded files
+          const uploadedBaseNames = uploadedForDocType.map(f => ({
+            original: f.fileName,
+            base: extractBaseName(f.fileName),
+            normalized: normalizeForComparison(extractBaseName(f.fileName)),
+            size: f.fileSize,
+            hash: f.contentHash
+          }));
+          
+          console.log(`🔍 Checking duplicates in batch ${batchNumber} (${docType}):`, {
+            uploadedFiles: uploadedBaseNames.length,
+            newFiles: files.length
+          });
+          
+          for (const file of files) {
+            const newFileNormalized = normalizeForComparison(file.name);
+            
+            // Check for name-based duplicates
+            const nameMatches = uploadedBaseNames.filter(uploaded => 
+              uploaded.normalized === newFileNormalized
+            );
+            
+            if (nameMatches.length > 0) {
+              duplicates.add(file.name);
+              console.log(`⚠️ DUPLICATE FOUND: "${file.name}" matches ${nameMatches.length} existing file(s):`, 
+                nameMatches.map(m => m.original)
+              );
+            }
+          }
         }
       }
-      return analysis;
-    });
-    
-    // Only update if we found duplicates
-    if (hasAnyDuplicates) {
-      setUploadPlan({
-        ...uploadPlan,
-        analyses: updatedAnalyses
-      });
-    }
-  }, [isOpen, uploadPlan, localStorageService]);
+      
+      console.log(`✅ Duplicate check complete: ${duplicates.size} duplicates found out of ${selectedFiles.length} files`);
+      if (duplicates.size > 0) {
+        console.log('📋 Duplicate files:', Array.from(duplicates));
+      }
+      setDuplicateFileNames(duplicates);
+    };
 
+    checkDuplicates();
+  }, [uploadPlan, localStorageService, appSettings.localStoragePath, selectedFiles.length]);
+
+  // Early return AFTER all hooks
   if (!isOpen) return null;
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -86,6 +129,18 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
     
     const plan = createBulkUploadPlan(selectedFiles, records);
     setUploadPlan(plan);
+    
+    // Initialize unmatched files as "skip by default"
+    const newEdits = new Map<string, { batch: string; docType: DocType; skipUpload?: boolean }>();
+    plan.unmatchedFiles.forEach(file => {
+      newEdits.set(file.name, {
+        batch: records[0]?.['Batch number'] || '',
+        docType: DocType.PO,
+        skipUpload: true // Default to skip for unmatched files
+      });
+    });
+    setEditedAnalyses(newEdits);
+    
     setCurrentStep('review');
     setIsAnalyzing(false);
   };
@@ -111,9 +166,6 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
 
   const handleConfirmUpload = async () => {
     if (!uploadPlan) return;
-
-    setCurrentStep('uploading');
-    setIsUploading(true);
 
     // Apply manual edits to the upload plan
     const finalPlan = new Map<string, Map<DocType, File[]>>(uploadPlan.groupedByBatch);
@@ -156,17 +208,36 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
       }
       batchMap.get(assignment.docType)!.push(file);
     }
-
+    
+    // DON'T transition to uploading yet - wait for App.tsx to start actual upload
+    // The progress callback below will be called when upload starts
+    
+    // Pass the plan to App.tsx which will:
+    // 1. Detect duplicates
+    // 2. Show DuplicateResolutionModal if needed
+    // 3. Start actual upload (progress callback triggers uploading state)
     try {
-      await onBulkUpload(finalPlan);
+      await onBulkUpload(finalPlan, (current, total, fileName) => {
+        // This callback is called during actual upload (after duplicate resolution)
+        // First call transitions to uploading state
+        if (currentStep !== 'uploading') {
+          setCurrentStep('uploading');
+        }
+        
+        const percentage = Math.round((current / total) * 100);
+        setUploadProgress(percentage);
+        setUploadProgressText(`Uploading ${current}/${total}: ${fileName}`);
+      });
+      
+      // If we get here, upload completed successfully
       setUploadProgress(100);
+      setUploadProgressText('Upload complete!');
       setCurrentStep('complete');
     } catch (error) {
       console.error('Bulk upload error:', error);
-      alert('Upload failed: ' + (error instanceof Error ? error.message : 'Unknown error'));
+      // Reset to review state on error
       setCurrentStep('review');
-    } finally {
-      setIsUploading(false);
+      setUploadProgress(0);
     }
   };
 
@@ -176,6 +247,7 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
     setCurrentStep('select');
     setEditedAnalyses(new Map());
     setUploadProgress(0);
+    setUploadProgressText('');
     onClose();
   };
 
@@ -325,6 +397,24 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
                 <h4 className="font-semibold text-gray-900 mb-3">
                   Matched Files ({selectedFiles.length - uploadPlan.unmatchedFiles.length})
                 </h4>
+                
+                {/* Duplicate Warning Banner */}
+                {duplicateFileNames.size > 0 && (
+                  <div className="mb-4 p-4 bg-gradient-to-r from-orange-50 to-yellow-50 border-l-4 border-orange-400 rounded-lg shadow-sm">
+                    <div className="flex items-start space-x-3">
+                      <FileWarning className="h-5 w-5 text-orange-500 mt-0.5 flex-shrink-0" />
+                      <div className="flex-1">
+                        <h5 className="text-sm font-semibold text-orange-900 mb-1">
+                          ⚠️ {duplicateFileNames.size} Duplicate File{duplicateFileNames.size > 1 ? 's' : ''} Detected
+                        </h5>
+                        <p className="text-xs text-orange-800">
+                          Some files already exist in storage. You'll be able to choose whether to skip, replace, or create versioned copies after clicking "Start Upload".
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
                 <div className="space-y-4">
                   {uploadPlan.analyses
                     .filter(a => a.matchedBatch && a.matchedDocType && a.confidence >= 60)
@@ -333,58 +423,60 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
                       const displayBatch = edited?.batch || analysis.matchedBatch!;
                       const displayDocType = edited?.docType || analysis.matchedDocType!;
                       const isSkipped = edited?.skipUpload || false;
+                      const isDuplicate = duplicateFileNames.has(analysis.file.name);
                       
                       return (
-                        <div key={idx} className={`bg-white border rounded-lg p-4 ${isSkipped ? 'border-gray-300 opacity-60' : analysis.isDuplicate ? 'border-orange-300 bg-orange-50' : 'border-gray-200'}`}>
-                          <div className="flex items-start justify-between mb-2">
+                        <div key={idx} className={`border rounded-lg p-4 transition-all ${
+                          isSkipped 
+                            ? 'border-gray-300 bg-gray-50 opacity-75' 
+                            : isDuplicate
+                            ? 'border-orange-300 bg-orange-50'
+                            : 'border-gray-200 bg-white'
+                        }`}>
+                          <div className="flex items-start justify-between mb-3">
                             <div className="flex-1">
-                              <div className="flex items-center space-x-2">
-                                <p className={`font-medium ${isSkipped ? 'text-gray-500 line-through' : 'text-gray-900'}`}>
+                              <div className="flex items-center space-x-2 mb-2">
+                                <p className={`font-medium text-base ${isSkipped ? 'text-gray-500 line-through' : 'text-gray-900'}`}>
                                   {analysis.file.name}
                                 </p>
-                                {isSkipped && (
-                                  <span className="px-2 py-0.5 text-xs font-medium bg-gray-200 text-gray-700 rounded">
-                                    <Ban className="h-3 w-3 inline mr-1" />
-                                    Will Not Upload
+                                {isDuplicate && !isSkipped && (
+                                  <span className="px-2 py-1 text-xs font-bold bg-orange-500 text-white rounded-full shadow-sm animate-pulse">
+                                    DUPLICATE
                                   </span>
                                 )}
-                                {analysis.isDuplicate && !isSkipped && (
-                                  <span className="px-2 py-0.5 text-xs font-medium bg-orange-200 text-orange-800 rounded">
-                                    <FileWarning className="h-3 w-3 inline mr-1" />
-                                    Duplicate
+                                {isSkipped && (
+                                  <span className="px-2 py-1 text-xs font-bold bg-gray-600 text-white rounded-full shadow-sm">
+                                    <Ban className="h-3 w-3 inline mr-1" />
+                                    SKIPPED
                                   </span>
                                 )}
                               </div>
-                              <p className="text-xs text-gray-500 mt-1">{analysis.reason}</p>
-                              {analysis.isDuplicate && analysis.duplicateWarning && !isSkipped && (
-                                <p className="text-xs text-orange-700 mt-2 bg-orange-100 p-2 rounded">
-                                  {analysis.duplicateWarning}
-                                </p>
-                              )}
+                              <p className="text-sm text-gray-600">{analysis.reason}</p>
                             </div>
-                            <span className={`px-2 py-1 text-xs font-medium rounded ${getConfidenceColor(analysis.confidence)}`}>
+                            <span className={`px-3 py-1 text-xs font-medium rounded-full ${getConfidenceColor(analysis.confidence)}`}>
                               {getConfidenceLabel(analysis.confidence)} ({analysis.confidence}%)
                             </span>
                           </div>
                           
-                          {/* Skip Upload Toggle */}
+                          {/* Simple Skip Toggle */}
                           <div className="flex items-center space-x-2 mt-3 mb-3">
                             <button
                               onClick={() => handleToggleSkipUpload(analysis.file.name)}
-                              className={`flex items-center space-x-2 px-3 py-2 rounded text-sm font-medium transition ${
+                              className={`flex items-center space-x-2 px-3 py-1.5 rounded text-xs font-medium transition ${
                                 isSkipped
                                   ? 'bg-gray-600 text-white hover:bg-gray-700'
-                                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                  : 'bg-green-600 text-white hover:bg-green-700'
                               }`}
                             >
-                              <Ban className="h-4 w-4" />
-                              <span>{isSkipped ? 'Marked: Don\'t Upload' : 'Mark as Don\'t Upload'}</span>
+                              <Ban className="h-3 w-3" />
+                              <span>{isSkipped ? 'Skipped (Click to Include)' : 'Include in Upload'}</span>
                             </button>
                             {isSkipped && (
-                              <p className="text-xs text-gray-500 italic">This file will be excluded from upload</p>
+                              <span className="text-xs text-gray-500 italic">⚠️ Will not be uploaded</span>
                             )}
                           </div>
                           
+                          {/* Manual Edit Assignments (only if not skipped) */}
                           {!isSkipped && (
                             <div className="flex items-center space-x-4">
                               <div className="flex-1">
@@ -395,7 +487,7 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
                                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
                                 >
                                   {records.map(r => (
-                                    <option key={r.id} value={r['Batch number']}>
+                                    <option key={r.id} value={String(r['Batch number'] || '')}>
                                       {r['Batch number']}
                                     </option>
                                   ))}
@@ -426,81 +518,282 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
               {/* Unmatched Files */}
               {uploadPlan.unmatchedFiles.length > 0 && (
                 <div>
-                  <h4 className="font-semibold text-gray-900 mb-3">
+                  <h4 className="font-semibold text-gray-900 mb-3 flex items-center">
+                    <AlertTriangle className="h-5 w-5 text-yellow-500 mr-2" />
                     Unmatched Files ({uploadPlan.unmatchedFiles.length})
                   </h4>
-                  <div className="bg-gray-50 rounded-lg p-4">
-                    <p className="text-sm text-gray-600 mb-2">
-                      These files could not be matched automatically. Please assign manually or skip.
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                    <p className="text-sm text-gray-700 mb-4">
+                      These files could not be matched automatically. Please assign them manually below or mark them to skip.
                     </p>
-                    <ul className="text-sm text-gray-700 space-y-1">
-                      {uploadPlan.unmatchedFiles.map((file, idx) => (
-                        <li key={idx}>• {file.name}</li>
-                      ))}
-                    </ul>
+                    <div className="space-y-4">
+                      {uploadPlan.unmatchedFiles.map((file, idx) => {
+                        const analysis = uploadPlan.analyses.find(a => a.file.name === file.name);
+                        if (!analysis) return null;
+                        
+                        const edited = editedAnalyses.get(file.name);
+                        const isSkipped = edited?.skipUpload || false;
+                        const displayBatch = edited?.batch || records[0]?.['Batch number'] || '';
+                        const displayDocType = edited?.docType || analysis.matchedDocType || DocType.PO;
+                        
+                        return (
+                          <div key={idx} className="bg-white border border-yellow-300 rounded-lg p-4">
+                            <div className="flex items-start justify-between mb-3">
+                              <div className="flex-1">
+                                <div className="flex items-center space-x-2 mb-1">
+                                  <FileWarning className="h-4 w-4 text-yellow-600" />
+                                  <span className="font-medium text-gray-900">{file.name}</span>
+                                </div>
+                                <p className="text-xs text-gray-600 mt-1">{analysis.reason}</p>
+                              </div>
+                            </div>
+                            
+                            {/* Skip Upload Toggle */}
+                            <div className="flex items-center space-x-2 mb-3">
+                              <button
+                                onClick={() => handleToggleSkipUpload(file.name)}
+                                className={`flex items-center space-x-2 px-3 py-1.5 rounded text-xs font-medium transition ${
+                                  isSkipped
+                                    ? 'bg-gray-600 text-white hover:bg-gray-700'
+                                    : 'bg-green-600 text-white hover:bg-green-700'
+                                }`}
+                              >
+                                <Ban className="h-3 w-3" />
+                                <span>{isSkipped ? 'Skipped (Click to Include)' : 'Include in Upload'}</span>
+                              </button>
+                              {isSkipped && (
+                                <span className="text-xs text-gray-500 italic">⚠️ Will not be uploaded</span>
+                              )}
+                            </div>
+                            
+                            {/* Manual Assignment */}
+                            {!isSkipped && (
+                              <div className="space-y-4">
+                                {/* Batch Selection with Embedded Search */}
+                                <div className="flex items-center space-x-4">
+                                  <SearchableDropdown
+                                    label="Select Batch"
+                                    options={records.map(r => ({
+                                      value: String(r['Batch number'] || ''),
+                                      label: String(r['Batch number'] || ''),
+                                      subtitle: `PO: ${r['PO REF'] || 'N/A'} | SO: ${r['SO'] || 'N/A'} | ${r['PRODUCT NAME (MAX 35 CHARACTERS)']?.substring(0, 30) || 'No Product'}`
+                                    }))}
+                                    value={displayBatch}
+                                    onChange={(value) => handleEditAssignment(file.name, value, displayDocType)}
+                                    placeholder="Choose batch..."
+                                    searchPlaceholder="🔍 Quick Search: batch, PO, SO, product, FSC..."
+                                    className="flex-1"
+                                  />
+                                  
+                                  <SearchableDropdown
+                                    label="Document Type"
+                                    options={[
+                                      { value: DocType.PO, label: 'Purchase Order' },
+                                      { value: DocType.SO, label: 'Sales Order' },
+                                      { value: DocType.SupplierInvoice, label: 'Supplier Invoice' },
+                                      { value: DocType.CustomerInvoice, label: 'Customer Invoice' }
+                                    ]}
+                                    value={displayDocType}
+                                    onChange={(value) => handleEditAssignment(file.name, displayBatch, value as DocType)}
+                                    placeholder="Select type..."
+                                    enableQuickSearch={false}
+                                    className="flex-1"
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               )}
 
               {/* Action Buttons */}
-              <div className="flex justify-between pt-4 border-t">
+              <div className="flex justify-between items-center pt-4 border-t">
                 <button
                   onClick={() => setCurrentStep('select')}
                   className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition"
                 >
                   Back
                 </button>
-                <button
-                  onClick={handleConfirmUpload}
-                  disabled={uploadPlan.groupedByBatch.size === 0}
-                  className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center space-x-2"
-                >
-                  <CheckCircle className="h-5 w-5" />
-                  <span>Confirm & Upload ({selectedFiles.length - uploadPlan.unmatchedFiles.length} files)</span>
-                </button>
+                
+                <div className="flex items-center space-x-4">
+                  {/* Summary Stats */}
+                  <div className="text-right">
+                    <p className="text-xs text-gray-500">Ready to upload</p>
+                    <p className="text-sm font-bold text-gray-900">
+                      {(() => {
+                        // Count matched files that aren't marked as skipped
+                        let count = 0;
+                        for (const docTypeMap of uploadPlan.groupedByBatch.values()) {
+                          for (const files of docTypeMap.values()) {
+                            count += files.length;
+                          }
+                        }
+                        // Add manually assigned unmatched files (not skipped)
+                        uploadPlan.unmatchedFiles.forEach(file => {
+                          const edited = editedAnalyses.get(file.name);
+                          if (edited && !edited.skipUpload) {
+                            count++;
+                          }
+                        });
+                        // Subtract any matched files marked as skip
+                        uploadPlan.analyses.forEach(analysis => {
+                          if (analysis.matchedBatch && analysis.matchedDocType) {
+                            const edited = editedAnalyses.get(analysis.file.name);
+                            if (edited?.skipUpload) {
+                              count--;
+                            }
+                          }
+                        });
+                        return count;
+                      })()}
+                      {' '}files
+                    </p>
+                  </div>
+                  
+                  <button
+                    onClick={handleConfirmUpload}
+                    className="px-6 py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg hover:from-green-700 hover:to-emerald-700 transition-all shadow-md hover:shadow-lg inline-flex items-center space-x-2 font-bold"
+                  >
+                    <Upload className="h-5 w-5" />
+                    <span>Start Upload</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}
 
           {/* Step 3: Uploading */}
           {currentStep === 'uploading' && (
-            <div className="text-center py-12">
-              <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+            <div className="text-center py-12 px-6">
+              <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto mb-6" />
+              <h3 className="text-xl font-bold text-gray-900 mb-3">
                 Uploading Files...
               </h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Please wait while we upload your files
+              <p className="text-sm font-medium text-gray-700 mb-1">
+                {uploadProgressText || 'Please wait while we upload your files'}
               </p>
-              <div className="max-w-md mx-auto">
-                <div className="bg-gray-200 rounded-full h-2 overflow-hidden">
+              <p className="text-2xl font-bold text-blue-600 mb-6">
+                {uploadProgress}%
+              </p>
+              
+              {/* Enhanced Progress Bar */}
+              <div className="max-w-2xl mx-auto">
+                <div className="bg-gray-200 rounded-full h-4 overflow-hidden shadow-inner mb-4">
                   <div
-                    className="bg-blue-600 h-full transition-all duration-300"
+                    className="bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 h-full transition-all duration-500 ease-out relative overflow-hidden"
                     style={{ width: `${uploadProgress}%` }}
-                  />
+                  >
+                    {/* Animated shimmer effect */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-shimmer" 
+                         style={{ 
+                           animation: 'shimmer 2s infinite',
+                           backgroundSize: '200% 100%'
+                         }} 
+                    />
+                  </div>
                 </div>
+                
+                {/* Progress milestones */}
+                <div className="flex justify-between text-xs text-gray-500 mb-2">
+                  <span className={uploadProgress >= 0 ? 'text-blue-600 font-medium' : ''}>Start</span>
+                  <span className={uploadProgress >= 25 ? 'text-blue-600 font-medium' : ''}>25%</span>
+                  <span className={uploadProgress >= 50 ? 'text-blue-600 font-medium' : ''}>50%</span>
+                  <span className={uploadProgress >= 75 ? 'text-blue-600 font-medium' : ''}>75%</span>
+                  <span className={uploadProgress === 100 ? 'text-green-600 font-medium' : ''}>Complete</span>
+                </div>
+                
+                {/* Upload stats */}
+                <div className="mt-6 grid grid-cols-3 gap-4 max-w-md mx-auto">
+                  <div className="bg-blue-50 rounded-lg p-3">
+                    <Upload className="h-5 w-5 text-blue-600 mx-auto mb-1" />
+                    <p className="text-xs text-gray-600">Status</p>
+                    <p className="text-sm font-semibold text-gray-900">
+                      {uploadProgress === 100 ? 'Done' : 'Uploading'}
+                    </p>
+                  </div>
+                  <div className="bg-green-50 rounded-lg p-3">
+                    <CheckCircle className="h-5 w-5 text-green-600 mx-auto mb-1" />
+                    <p className="text-xs text-gray-600">Progress</p>
+                    <p className="text-sm font-semibold text-gray-900">{uploadProgress}%</p>
+                  </div>
+                  <div className="bg-purple-50 rounded-lg p-3">
+                    <Sparkles className="h-5 w-5 text-purple-600 mx-auto mb-1" />
+                    <p className="text-xs text-gray-600">Speed</p>
+                    <p className="text-sm font-semibold text-gray-900">Fast</p>
+                  </div>
+                </div>
+                
+                <p className="text-xs text-gray-500 mt-6 italic">
+                  ⏳ Please don't close this window until the upload is complete
+                </p>
               </div>
             </div>
           )}
 
           {/* Step 4: Complete */}
           {currentStep === 'complete' && (
-            <div className="text-center py-12">
-              <div className="mb-4">
-                <CheckCircle className="h-16 w-16 text-green-500 mx-auto" />
+            <div className="text-center py-12 px-6">
+              <div className="mb-6 relative">
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="h-20 w-20 bg-green-100 rounded-full animate-ping opacity-20" />
+                </div>
+                <CheckCircle className="h-20 w-20 text-green-500 mx-auto relative" />
               </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                Upload Complete!
+              <h3 className="text-2xl font-bold text-gray-900 mb-3">
+                🎉 Upload Complete!
               </h3>
-              <p className="text-sm text-gray-600 mb-6">
+              <p className="text-base text-gray-700 mb-6 max-w-md mx-auto">
                 All files have been successfully uploaded and distributed to their batches.
               </p>
-              <button
-                onClick={handleClose}
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-              >
-                Close
-              </button>
+              
+              {/* Success stats */}
+              {uploadPlan && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-6 max-w-md mx-auto mb-6">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-gray-600 mb-1">Files Uploaded</p>
+                      <p className="text-3xl font-bold text-green-600">
+                        {uploadPlan.analyses.filter(a => !editedAnalyses.get(a.file.name)?.skipUpload).length}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600 mb-1">Batches Updated</p>
+                      <p className="text-3xl font-bold text-green-600">
+                        {new Set(uploadPlan.analyses
+                          .filter(a => !editedAnalyses.get(a.file.name)?.skipUpload)
+                          .map(a => editedAnalyses.get(a.file.name)?.batch || a.matchedBatch)
+                        ).size}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              <div className="flex gap-3 justify-center">
+                <button
+                  onClick={handleClose}
+                  className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium shadow-md hover:shadow-lg"
+                >
+                  ✓ Done
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedFiles([]);
+                    setUploadPlan(null);
+                    setCurrentStep('select');
+                    setEditedAnalyses(new Map());
+                    setUploadProgress(0);
+                    setUploadProgressText('');
+                  }}
+                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium shadow-md hover:shadow-lg"
+                >
+                  📤 Upload More
+                </button>
+              </div>
             </div>
           )}
         </div>
