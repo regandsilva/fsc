@@ -79,7 +79,6 @@ const App: React.FC = () => {
   const [textFilter, setTextFilter] = useState<string>('');
   const [dateFilter, setDateFilter] = useState<DateFilter>({ operator: 'exact', date1: '', date2: '' });
   const [createdDateFilter, setCreatedDateFilter] = useState<DateFilter>({ operator: 'exact', date1: '', date2: '' });
-  const [uploadStatusFilter, setUploadStatusFilter] = useState<'all' | 'complete' | 'partial' | 'none'>('all');
   const [smartFilter, setSmartFilter] = useState<'all' | 'missing-po' | 'missing-so' | 'missing-supplier-inv' | 'missing-customer-inv' | 'complete' | 'incomplete'>('all');
   
   const debouncedTextFilter = useDebounce(textFilter, 300);
@@ -323,39 +322,6 @@ const App: React.FC = () => {
       }
     }
 
-    // Filter by upload status
-    if (uploadStatusFilter !== 'all') {
-      filteredItems = filteredItems.filter(record => {
-        const recordFiles = allManagedFiles[record.id] || { [DocType.PO]: [], [DocType.SO]: [], [DocType.SupplierInvoice]: [], [DocType.CustomerInvoice]: [] };
-        
-        // Count uploaded files for this record
-        let uploadedCount = 0;
-        if (appSettings.storageMode === 'local' && localStorageServiceRef.current) {
-          const batchNumber = record['Batch number'];
-          if (batchNumber) {
-            uploadedCount = Object.values(DocType).reduce((sum, docType) => {
-              return sum + localStorageServiceRef.current!.getUploadedFileCount(batchNumber, docType);
-            }, 0);
-          }
-        } else {
-          uploadedCount = (Object.values(recordFiles) as ManagedFile[][]).reduce((sum: number, files) => sum + files.length, 0);
-        }
-
-        const totalRequired = 4; // PO, SO, Supplier Invoice, Customer Invoice
-        
-        switch (uploadStatusFilter) {
-          case 'complete':
-            return uploadedCount >= totalRequired;
-          case 'partial':
-            return uploadedCount > 0 && uploadedCount < totalRequired;
-          case 'none':
-            return uploadedCount === 0;
-          default:
-            return true;
-        }
-      });
-    }
-
     // Smart Filter - Filter by missing document types or completion status
     if (smartFilter !== 'all') {
       filteredItems = filteredItems.filter(record => {
@@ -412,7 +378,7 @@ const App: React.FC = () => {
       });
     }
     return filteredItems;
-  }, [data, debouncedTextFilter, dateFilter, createdDateFilter, sortConfig, uploadStatusFilter, smartFilter, allManagedFiles, appSettings.storageMode, localStorageServiceRef]);
+  }, [data, debouncedTextFilter, dateFilter, createdDateFilter, sortConfig, smartFilter, allManagedFiles, appSettings.storageMode, localStorageServiceRef]);
 
   const requestSort = (key: keyof FscRecord) => {
     let direction: 'ascending' | 'descending' = 'ascending';
@@ -474,41 +440,49 @@ const App: React.FC = () => {
     },
   };
 
-  // Calculate statistics for filtered data
+  // Calculate statistics for filtered data using batch completion
   const dataStats = useMemo(() => {
     const total = processedData.length;
-    let completeCount = 0;
-    let partialCount = 0;
-    let noneCount = 0;
+    let completeBatches = 0;
+    let incompleteBatches = 0;
+    let missingPO = 0;
+    let missingSO = 0;
+    let missingSupplierInv = 0;
+    let missingCustomerInv = 0;
+
+    const getUploadedCount = (batchNumber: string, docType: DocType): number => {
+      if (appSettings.storageMode === 'local' && localStorageServiceRef.current) {
+        return localStorageServiceRef.current.getUploadedFileCount(batchNumber, docType);
+      }
+      return 0;
+    };
 
     processedData.forEach(record => {
-      const recordFiles = allManagedFiles[record.id] || { [DocType.PO]: [], [DocType.SO]: [], [DocType.SupplierInvoice]: [], [DocType.CustomerInvoice]: [] };
+      const completion = calculateBatchCompletion(record, getUploadedCount);
       
-      let uploadedCount = 0;
-      if (appSettings.storageMode === 'local' && localStorageServiceRef.current) {
-        const batchNumber = record['Batch number'];
-        if (batchNumber) {
-          uploadedCount = Object.values(DocType).reduce((sum, docType) => {
-            return sum + localStorageServiceRef.current!.getUploadedFileCount(batchNumber, docType);
-          }, 0);
-        }
+      if (completion.isComplete) {
+        completeBatches++;
       } else {
-        uploadedCount = (Object.values(recordFiles) as ManagedFile[][]).reduce((sum: number, files) => sum + files.length, 0);
+        incompleteBatches++;
       }
 
-      const totalRequired = 4; // PO, SO, Supplier Invoice, Customer Invoice
-      
-      if (uploadedCount >= totalRequired) {
-        completeCount++;
-      } else if (uploadedCount > 0) {
-        partialCount++;
-      } else {
-        noneCount++;
-      }
+      // Count missing document types
+      if (hasMissingDocType(completion, DocType.PO)) missingPO++;
+      if (hasMissingDocType(completion, DocType.SO)) missingSO++;
+      if (hasMissingDocType(completion, DocType.SupplierInvoice)) missingSupplierInv++;
+      if (hasMissingDocType(completion, DocType.CustomerInvoice)) missingCustomerInv++;
     });
 
-    return { total, completeCount, partialCount, noneCount };
-  }, [processedData, allManagedFiles, appSettings.storageMode]);
+    return { 
+      total, 
+      completeBatches, 
+      incompleteBatches, 
+      missingPO, 
+      missingSO, 
+      missingSupplierInv, 
+      missingCustomerInv 
+    };
+  }, [processedData, appSettings.storageMode, localStorageServiceRef]);
 
   return (
     <div className="min-h-screen text-gray-800 transition-colors duration-300">
@@ -541,8 +515,6 @@ const App: React.FC = () => {
               setDateFilter={setDateFilter}
               createdDateFilter={createdDateFilter}
               setCreatedDateFilter={setCreatedDateFilter}
-              uploadStatusFilter={uploadStatusFilter}
-              setUploadStatusFilter={setUploadStatusFilter}
               smartFilter={smartFilter}
               setSmartFilter={setSmartFilter}
             />
@@ -550,27 +522,39 @@ const App: React.FC = () => {
             {/* Stats Summary */}
             {!isLoading && !error && data.length > 0 && (
               <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-4">
                   <div className="text-center">
                     <div className="text-2xl font-bold text-gray-900">{dataStats.total}</div>
                     <div className="text-xs text-gray-600 uppercase tracking-wide">Total Records</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-green-600">{dataStats.completeCount}</div>
-                    <div className="text-xs text-gray-600 uppercase tracking-wide">Fully Completed</div>
+                    <div className="text-2xl font-bold text-green-600">{dataStats.completeBatches}</div>
+                    <div className="text-xs text-gray-600 uppercase tracking-wide">Complete</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-yellow-600">{dataStats.partialCount}</div>
-                    <div className="text-xs text-gray-600 uppercase tracking-wide">Partially Uploaded</div>
+                    <div className="text-2xl font-bold text-orange-600">{dataStats.incompleteBatches}</div>
+                    <div className="text-xs text-gray-600 uppercase tracking-wide">Incomplete</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-red-600">{dataStats.noneCount}</div>
-                    <div className="text-xs text-gray-600 uppercase tracking-wide">Not Started</div>
+                    <div className="text-2xl font-bold text-red-600">{dataStats.missingPO}</div>
+                    <div className="text-xs text-gray-600 uppercase tracking-wide">Missing PO</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-red-600">{dataStats.missingSO}</div>
+                    <div className="text-xs text-gray-600 uppercase tracking-wide">Missing SO</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-red-600">{dataStats.missingSupplierInv}</div>
+                    <div className="text-xs text-gray-600 uppercase tracking-wide">Missing Supplier Inv</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-red-600">{dataStats.missingCustomerInv}</div>
+                    <div className="text-xs text-gray-600 uppercase tracking-wide">Missing Customer Inv</div>
                   </div>
                 </div>
                 <div className="mt-3 text-center text-xs text-gray-500">
-                  {dataStats.completeCount > 0 && (
-                    <span>{Math.round((dataStats.completeCount / dataStats.total) * 100)}% completion rate</span>
+                  {dataStats.completeBatches > 0 && (
+                    <span>{Math.round((dataStats.completeBatches / dataStats.total) * 100)}% completion rate</span>
                   )}
                 </div>
               </div>
