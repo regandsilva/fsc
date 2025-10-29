@@ -22,6 +22,7 @@ export interface ColumnPreference {
   visible: boolean;
   width: number; // Width in pixels
   group: 'airtable' | 'app';
+  autoFit?: boolean; // Whether to auto-fit this column
 }
 
 export interface ColumnPreferences {
@@ -104,7 +105,15 @@ export const columnPreferences = {
   // Helper to update column width
   updateWidth(preferences: ColumnPreferences, columnId: ColumnId, width: number): ColumnPreferences {
     const columns = preferences.columns.map(col =>
-      col.id === columnId ? { ...col, width } : col
+      col.id === columnId ? { ...col, width, autoFit: false } : col
+    );
+    return { columns };
+  },
+
+  // Helper to enable auto-fit for a column
+  setAutoFit(preferences: ColumnPreferences, columnId: ColumnId, autoFit: boolean): ColumnPreferences {
+    const columns = preferences.columns.map(col =>
+      col.id === columnId ? { ...col, autoFit } : col
     );
     return { columns };
   },

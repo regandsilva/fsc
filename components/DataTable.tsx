@@ -241,6 +241,9 @@ export const DataTable: React.FC<DataTableProps> = ({
   const [columnPrefs, setColumnPrefs] = useState<ColumnPreferences>(columnPreferences.getDefaultPreferences());
   const [showColumnSettings, setShowColumnSettings] = useState<boolean>(false);
   const [columnPrefsLoaded, setColumnPrefsLoaded] = useState<boolean>(false);
+  const [resizingColumn, setResizingColumn] = useState<ColumnId | null>(null);
+  const [resizeStartX, setResizeStartX] = useState<number>(0);
+  const [resizeStartWidth, setResizeStartWidth] = useState<number>(0);
 
   // Load column preferences on mount
   useEffect(() => {
@@ -389,6 +392,41 @@ export const DataTable: React.FC<DataTableProps> = ({
     setColumnPrefs(defaults);
   };
 
+  const handleAutoFitColumn = (columnId: ColumnId) => {
+    setColumnPrefs(prev => columnPreferences.setAutoFit(prev, columnId, true));
+  };
+
+  // Column resize handlers
+  const handleResizeStart = (e: React.MouseEvent, columnId: ColumnId, currentWidth: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setResizingColumn(columnId);
+    setResizeStartX(e.clientX);
+    setResizeStartWidth(currentWidth);
+  };
+
+  useEffect(() => {
+    if (!resizingColumn) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const diff = e.clientX - resizeStartX;
+      const newWidth = Math.max(80, resizeStartWidth + diff); // Minimum 80px
+      handleUpdateColumnWidth(resizingColumn, newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setResizingColumn(null);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [resizingColumn, resizeStartX, resizeStartWidth]);
+
   const airtableColumns = columnPreferences.getAirtableColumns(columnPrefs);
   const appColumns = columnPreferences.getAppColumns(columnPrefs);
 
@@ -423,7 +461,7 @@ export const DataTable: React.FC<DataTableProps> = ({
               </div>
 
               <p className="text-sm text-gray-600 mb-4">
-                Show/hide columns and adjust their width
+                Show/hide columns. Drag column edges in the table to resize, or click "Auto" for auto-fit.
               </p>
 
               {/* Airtable Columns Section */}
@@ -451,28 +489,20 @@ export const DataTable: React.FC<DataTableProps> = ({
                         >
                           {col.label}
                         </label>
-                        <span className="text-xs text-gray-500">{col.width}px</span>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-xs text-gray-500">{col.autoFit ? 'Auto' : `${col.width}px`}</span>
+                          <button
+                            onClick={() => handleAutoFitColumn(col.id)}
+                            className="px-2 py-1 text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 rounded transition"
+                            title="Auto-fit this column"
+                          >
+                            Auto
+                          </button>
+                        </div>
                       </div>
-                      {col.visible && (
-                        <div className="ml-7 flex items-center space-x-3">
-                          <label className="text-xs text-gray-600 w-12">Width:</label>
-                          <input
-                            type="range"
-                            min="80"
-                            max="400"
-                            step="10"
-                            value={col.width}
-                            onChange={(e) => handleUpdateColumnWidth(col.id, parseInt(e.target.value))}
-                            className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                          />
-                          <input
-                            type="number"
-                            min="80"
-                            max="400"
-                            value={col.width}
-                            onChange={(e) => handleUpdateColumnWidth(col.id, parseInt(e.target.value))}
-                            className="w-16 px-2 py-1 text-xs border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-                          />
+                      {col.visible && !col.autoFit && (
+                        <div className="ml-7 text-xs text-gray-500 italic">
+                          💡 Drag column edges in the table to resize
                         </div>
                       )}
                     </div>
@@ -505,28 +535,20 @@ export const DataTable: React.FC<DataTableProps> = ({
                         >
                           {col.label}
                         </label>
-                        <span className="text-xs text-gray-500">{col.width}px</span>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-xs text-gray-500">{col.autoFit ? 'Auto' : `${col.width}px`}</span>
+                          <button
+                            onClick={() => handleAutoFitColumn(col.id)}
+                            className="px-2 py-1 text-xs bg-green-50 hover:bg-green-100 text-green-700 rounded transition"
+                            title="Auto-fit this column"
+                          >
+                            Auto
+                          </button>
+                        </div>
                       </div>
-                      {col.visible && (
-                        <div className="ml-7 flex items-center space-x-3">
-                          <label className="text-xs text-gray-600 w-12">Width:</label>
-                          <input
-                            type="range"
-                            min="80"
-                            max="400"
-                            step="10"
-                            value={col.width}
-                            onChange={(e) => handleUpdateColumnWidth(col.id, parseInt(e.target.value))}
-                            className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                          />
-                          <input
-                            type="number"
-                            min="80"
-                            max="400"
-                            value={col.width}
-                            onChange={(e) => handleUpdateColumnWidth(col.id, parseInt(e.target.value))}
-                            className="w-16 px-2 py-1 text-xs border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-                          />
+                      {col.visible && !col.autoFit && (
+                        <div className="ml-7 text-xs text-gray-500 italic">
+                          💡 Drag column edges in the table to resize
                         </div>
                       )}
                     </div>
@@ -565,7 +587,12 @@ export const DataTable: React.FC<DataTableProps> = ({
                 <th 
                   key={header} 
                   scope="col" 
-                  style={{ width: `${colPref.width}px`, minWidth: `${colPref.width}px` }}
+                  style={{ 
+                    width: colPref.autoFit ? 'auto' : `${colPref.width}px`, 
+                    minWidth: colPref.autoFit ? 'auto' : `${colPref.width}px`,
+                    maxWidth: colPref.autoFit ? 'none' : undefined,
+                    position: 'relative'
+                  }}
                   className={`px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-move select-none transition-colors ${
                     dragOverColumn === header ? 'bg-blue-100' : ''
                   } ${
@@ -578,42 +605,135 @@ export const DataTable: React.FC<DataTableProps> = ({
                   onDrop={(e) => handleDrop(e, header)}
                   onDragEnd={handleDragEnd}
                 >
-                  <button className="flex items-center group w-full" onClick={() => requestSort(header)}>
-                    <span className="mr-1">⋮⋮</span>
-                    <span>{header}</span>
-                    {getSortIcon(header)}
-                  </button>
+                  <div className="flex items-center justify-between w-full">
+                    <button className="flex items-center group flex-1" onClick={() => requestSort(header)}>
+                      <span className="mr-1">⋮⋮</span>
+                      <span className="break-words">{header}</span>
+                      {getSortIcon(header)}
+                    </button>
+                    {/* Resize handle */}
+                    <div
+                      className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 bg-gray-300"
+                      onMouseDown={(e) => handleResizeStart(e, header as AirtableColumnId, colPref.width)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
                 </th>
               );
             })}
             {(() => {
               const poCol = columnPreferences.getColumn(columnPrefs, 'PO');
               return poCol?.visible && (
-                <th scope="col" style={{ width: `${poCol.width}px`, minWidth: `${poCol.width}px` }} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">PO</th>
+                <th 
+                  scope="col" 
+                  style={{ 
+                    width: poCol.autoFit ? 'auto' : `${poCol.width}px`, 
+                    minWidth: poCol.autoFit ? 'auto' : `${poCol.width}px`,
+                    position: 'relative' 
+                  }} 
+                  className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
+                >
+                  <div className="flex items-center justify-center relative">
+                    <span>PO</span>
+                    <div
+                      className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 bg-gray-300"
+                      onMouseDown={(e) => handleResizeStart(e, 'PO', poCol.width)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                </th>
               );
             })()}
             {(() => {
               const soCol = columnPreferences.getColumn(columnPrefs, 'SO');
               return soCol?.visible && (
-                <th scope="col" style={{ width: `${soCol.width}px`, minWidth: `${soCol.width}px` }} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">SO</th>
+                <th 
+                  scope="col" 
+                  style={{ 
+                    width: soCol.autoFit ? 'auto' : `${soCol.width}px`, 
+                    minWidth: soCol.autoFit ? 'auto' : `${soCol.width}px`,
+                    position: 'relative' 
+                  }} 
+                  className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
+                >
+                  <div className="flex items-center justify-center relative">
+                    <span>SO</span>
+                    <div
+                      className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 bg-gray-300"
+                      onMouseDown={(e) => handleResizeStart(e, 'SO', soCol.width)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                </th>
               );
             })()}
             {(() => {
               const supplierCol = columnPreferences.getColumn(columnPrefs, 'SupplierInvoice');
               return supplierCol?.visible && (
-                <th scope="col" style={{ width: `${supplierCol.width}px`, minWidth: `${supplierCol.width}px` }} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier Invoice</th>
+                <th 
+                  scope="col" 
+                  style={{ 
+                    width: supplierCol.autoFit ? 'auto' : `${supplierCol.width}px`, 
+                    minWidth: supplierCol.autoFit ? 'auto' : `${supplierCol.width}px`,
+                    position: 'relative' 
+                  }} 
+                  className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
+                >
+                  <div className="flex items-center justify-center relative">
+                    <span>Supplier Invoice</span>
+                    <div
+                      className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 bg-gray-300"
+                      onMouseDown={(e) => handleResizeStart(e, 'SupplierInvoice', supplierCol.width)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                </th>
               );
             })()}
             {(() => {
               const customerCol = columnPreferences.getColumn(columnPrefs, 'CustomerInvoice');
               return customerCol?.visible && (
-                <th scope="col" style={{ width: `${customerCol.width}px`, minWidth: `${customerCol.width}px` }} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Customer Invoice</th>
+                <th 
+                  scope="col" 
+                  style={{ 
+                    width: customerCol.autoFit ? 'auto' : `${customerCol.width}px`, 
+                    minWidth: customerCol.autoFit ? 'auto' : `${customerCol.width}px`,
+                    position: 'relative' 
+                  }} 
+                  className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
+                >
+                  <div className="flex items-center justify-center relative">
+                    <span>Customer Invoice</span>
+                    <div
+                      className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 bg-gray-300"
+                      onMouseDown={(e) => handleResizeStart(e, 'CustomerInvoice', customerCol.width)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                </th>
               );
             })()}
             {(() => {
               const completionCol = columnPreferences.getColumn(columnPrefs, 'Completion');
               return completionCol?.visible && (
-                <th scope="col" style={{ width: `${completionCol.width}px`, minWidth: `${completionCol.width}px` }} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Completion</th>
+                <th 
+                  scope="col" 
+                  style={{ 
+                    width: completionCol.autoFit ? 'auto' : `${completionCol.width}px`, 
+                    minWidth: completionCol.autoFit ? 'auto' : `${completionCol.width}px`,
+                    position: 'relative' 
+                  }} 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                >
+                  <div className="flex items-center justify-between relative">
+                    <span>Completion</span>
+                    <div
+                      className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 bg-gray-300"
+                      onMouseDown={(e) => handleResizeStart(e, 'Completion', completionCol.width)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                </th>
               );
             })()}
           </tr>
@@ -627,7 +747,15 @@ export const DataTable: React.FC<DataTableProps> = ({
                   if (!colPref?.visible) return null;
                   
                   return (
-                    <td key={header} style={{ width: `${colPref.width}px`, minWidth: `${colPref.width}px` }} className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td 
+                      key={header} 
+                      style={{ 
+                        width: colPref.autoFit ? 'auto' : `${colPref.width}px`, 
+                        minWidth: colPref.autoFit ? 'auto' : `${colPref.width}px`,
+                        maxWidth: colPref.autoFit ? 'none' : `${colPref.width}px`
+                      }} 
+                      className="px-6 py-4 text-sm text-gray-500 break-words"
+                    >
                       {renderCellContent(record[header], header)}
                     </td>
                   );
@@ -695,7 +823,14 @@ export const DataTable: React.FC<DataTableProps> = ({
                 {(() => {
                   const completionCol = columnPreferences.getColumn(columnPrefs, 'Completion');
                   return completionCol?.visible && (
-                    <td style={{ width: `${completionCol.width}px`, minWidth: `${completionCol.width}px` }} className="px-6 py-4 text-sm text-gray-500">
+                    <td 
+                      style={{ 
+                        width: completionCol.autoFit ? 'auto' : `${completionCol.width}px`, 
+                        minWidth: completionCol.autoFit ? 'auto' : `${completionCol.width}px`,
+                        maxWidth: completionCol.autoFit ? 'none' : `${completionCol.width}px`
+                      }} 
+                      className="px-6 py-4 text-sm text-gray-500 break-words"
+                    >
                       <BatchProgressBar
                         record={record}
                         appSettings={appSettings}
