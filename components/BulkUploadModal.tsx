@@ -132,8 +132,20 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
     const plan = createBulkUploadPlan(selectedFiles, records);
     setUploadPlan(plan);
     
-    // Detect file relationships
-    const relationships = detectFileRelationships(selectedFiles);
+    // Create file-to-batch mapping from the upload plan
+    const fileToBatchMap = new Map<File, string>();
+    for (const analysis of plan.analyses) {
+      if (analysis.matchedBatch) {
+        fileToBatchMap.set(analysis.file, String(analysis.matchedBatch));
+      }
+    }
+    
+    // Detect file relationships (batch-aware to prevent cross-batch grouping)
+    const relationships = detectFileRelationships(
+      selectedFiles,
+      undefined, // Let it extract references automatically
+      fileToBatchMap // Pass batch mapping for scoped detection
+    );
     setRelationshipAnalysis(relationships);
     
     // Initialize unmatched files as "skip by default"

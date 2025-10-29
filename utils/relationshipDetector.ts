@@ -19,6 +19,7 @@ import { FscRecord, DocType } from '../types';
 export interface FileRelationship {
   groupId: string; // Unique identifier for the relationship group
   relationshipType: 'same-po' | 'same-so' | 'sequence' | 'po-invoice-set' | 'so-invoice-set';
+  batchNumber?: string; // Batch this relationship belongs to (IMPORTANT: prevents cross-batch grouping)
   files: Array<{
     file: File;
     fileName: string;
@@ -50,10 +51,13 @@ export interface RelationshipAnalysis {
 
 /**
  * Analyze multiple files for relationships
+ * IMPORTANT: Relationships are scoped to within the same batch to prevent
+ * cross-batch grouping (different batches can have same PO/SO numbers)
  */
 export function detectFileRelationships(
   files: File[],
-  extractedReferences?: Map<File, { po?: string[]; so?: string[]; batch?: string[] }>
+  extractedReferences?: Map<File, { po?: string[]; so?: string[]; batch?: string[] }>,
+  fileToBatchMap?: Map<File, string> // Maps each file to its batch number
 ): RelationshipAnalysis {
   console.log(`🔗 Analyzing ${files.length} files for relationships...`);
   
@@ -63,54 +67,137 @@ export function detectFileRelationships(
   // Extract references if not provided
   const references = extractedReferences || extractReferencesFromFiles(files);
   
-  // Group by PO number
-  const poGroups = groupByReference(files, references, 'po');
-  for (const [poNumber, groupFiles] of poGroups.entries()) {
-    if (groupFiles.length > 1) {
-      const group = createRelationshipGroup(
-        'same-po',
-        poNumber,
-        groupFiles,
-        references
-      );
-      groups.push(group);
-      groupFiles.forEach(f => processedFiles.add(f));
+  // If batch mapping provided, group files by batch first
+  if (fileToBatchMap && fileToBatchMap.size > 0) {
+    console.log('📦 Batch-aware relationship detection enabled');
+    
+    // Group files by batch
+    const batchGroups = new Map<string, File[]>();
+    for (const file of files) {
+      const batch = fileToBatchMap.get(file);
+      if (batch) {
+        if (!batchGroups.has(batch)) {
+          batchGroups.set(batch, []);
+        }
+        batchGroups.get(batch)!.push(file);
+      }
     }
-  }
-  
-  // Group by SO number
-  const soGroups = groupByReference(files, references, 'so');
-  for (const [soNumber, groupFiles] of soGroups.entries()) {
-    if (groupFiles.length > 1) {
-      const group = createRelationshipGroup(
-        'same-so',
-        soNumber,
-        groupFiles,
-        references
+    
+    // Process each batch independently
+    for (const [batchNumber, batchFiles] of batchGroups.entries()) {
+      console.log(`  Processing batch ${batchNumber} with ${batchFiles.length} files`);
+      
+      // Group by PO number within this batch
+      const poGroups = groupByReference(batchFiles, references, 'po');
+      for (const [poNumber, groupFiles] of poGroups.entries()) {
+        if (groupFiles.length > 1) {
+          const group = createRelationshipGroup(
+            'same-po',
+            poNumber,
+            groupFiles,
+            references,
+            batchNumber // Pass batch number
+          );
+          groups.push(group);
+          groupFiles.forEach(f => processedFiles.add(f));
+        }
+      }
+      
+      // Group by SO number within this batch
+      const soGroups = groupByReference(batchFiles, references, 'so');
+      for (const [soNumber, groupFiles] of soGroups.entries()) {
+        if (groupFiles.length > 1) {
+          const group = createRelationshipGroup(
+            'same-so',
+            soNumber,
+            groupFiles,
+            references,
+            batchNumber // Pass batch number
+          );
+          groups.push(group);
+          groupFiles.forEach(f => processedFiles.add(f));
+        }
+      }
+      
+      // Detect document sequences within this batch
+      const sequenceGroups = detectSequences(
+        batchFiles.filter(f => !processedFiles.has(f)),
+        batchNumber // Pass batch number
       );
-      groups.push(group);
-      groupFiles.forEach(f => processedFiles.add(f));
+      for (const group of sequenceGroups) {
+        groups.push(group);
+        group.files.forEach(f => processedFiles.add(f.file));
+      }
+      
+      // Detect PO + Invoice sets within this batch
+      const poInvoiceSets = detectPoInvoiceSets(
+        batchFiles,
+        references,
+        batchNumber // Pass batch number
+      );
+      for (const group of poInvoiceSets) {
+        const newFiles = group.files.filter(f => !processedFiles.has(f.file));
+        if (newFiles.length > 1) {
+          groups.push({
+            ...group,
+            files: newFiles,
+          });
+          newFiles.forEach(f => processedFiles.add(f.file));
+        }
+      }
     }
-  }
-  
-  // Detect document sequences (Page 1 of 3, etc.)
-  const sequenceGroups = detectSequences(files.filter(f => !processedFiles.has(f)));
-  for (const group of sequenceGroups) {
-    groups.push(group);
-    group.files.forEach(f => processedFiles.add(f.file));
-  }
-  
-  // Detect PO + Invoice sets
-  const poInvoiceSets = detectPoInvoiceSets(files, references);
-  for (const group of poInvoiceSets) {
-    // Only add if files aren't already in other groups
-    const newFiles = group.files.filter(f => !processedFiles.has(f.file));
-    if (newFiles.length > 1) {
-      groups.push({
-        ...group,
-        files: newFiles,
-      });
-      newFiles.forEach(f => processedFiles.add(f.file));
+  } else {
+    // Original behavior (no batch scoping) - for backward compatibility
+    console.log('⚠️ WARNING: Batch-aware detection not enabled. Same PO/SO across different batches may be incorrectly grouped!');
+    
+    // Group by PO number
+    const poGroups = groupByReference(files, references, 'po');
+    for (const [poNumber, groupFiles] of poGroups.entries()) {
+      if (groupFiles.length > 1) {
+        const group = createRelationshipGroup(
+          'same-po',
+          poNumber,
+          groupFiles,
+          references
+        );
+        groups.push(group);
+        groupFiles.forEach(f => processedFiles.add(f));
+      }
+    }
+    
+    // Group by SO number
+    const soGroups = groupByReference(files, references, 'so');
+    for (const [soNumber, groupFiles] of soGroups.entries()) {
+      if (groupFiles.length > 1) {
+        const group = createRelationshipGroup(
+          'same-so',
+          soNumber,
+          groupFiles,
+          references
+        );
+        groups.push(group);
+        groupFiles.forEach(f => processedFiles.add(f));
+      }
+    }
+    
+    // Detect document sequences (Page 1 of 3, etc.)
+    const sequenceGroups = detectSequences(files.filter(f => !processedFiles.has(f)));
+    for (const group of sequenceGroups) {
+      groups.push(group);
+      group.files.forEach(f => processedFiles.add(f.file));
+    }
+    
+    // Detect PO + Invoice sets
+    const poInvoiceSets = detectPoInvoiceSets(files, references);
+    for (const group of poInvoiceSets) {
+      const newFiles = group.files.filter(f => !processedFiles.has(f.file));
+      if (newFiles.length > 1) {
+        groups.push({
+          ...group,
+          files: newFiles,
+        });
+        newFiles.forEach(f => processedFiles.add(f.file));
+      }
     }
   }
   
@@ -241,11 +328,15 @@ function normalizeReference(ref: string, type: 'po' | 'so' | 'batch'): string {
 /**
  * Create a relationship group
  */
+/**
+ * Create a relationship group
+ */
 function createRelationshipGroup(
   type: 'same-po' | 'same-so' | 'sequence' | 'po-invoice-set' | 'so-invoice-set',
   referenceNumber: string,
   files: File[],
-  references: Map<File, { po?: string[]; so?: string[]; batch?: string[] }>
+  references: Map<File, { po?: string[]; so?: string[]; batch?: string[] }>,
+  batchNumber?: string // Optional batch number to scope this relationship
 ): FileRelationship {
   const groupFiles = files.map(file => {
     const refs = references.get(file);
@@ -270,20 +361,27 @@ function createRelationshipGroup(
   const warnings: string[] = [];
   
   if (type === 'same-po') {
-    suggestion = `${files.length} files belong to PO ${referenceNumber}`;
+    suggestion = batchNumber 
+      ? `${files.length} files belong to PO ${referenceNumber} (Batch ${batchNumber})`
+      : `${files.length} files belong to PO ${referenceNumber}`;
     if (!isComplete && sequenceInfo.missingItems) {
       warnings.push(`Possibly incomplete: ${sequenceInfo.missingItems.join(', ')}`);
     }
   } else if (type === 'same-so') {
-    suggestion = `${files.length} files belong to SO ${referenceNumber}`;
+    suggestion = batchNumber
+      ? `${files.length} files belong to SO ${referenceNumber} (Batch ${batchNumber})`
+      : `${files.length} files belong to SO ${referenceNumber}`;
     if (!isComplete && sequenceInfo.missingItems) {
       warnings.push(`Possibly incomplete: ${sequenceInfo.missingItems.join(', ')}`);
     }
   }
   
   return {
-    groupId: `${type}-${referenceNumber}`,
+    groupId: batchNumber 
+      ? `${type}-${batchNumber}-${referenceNumber}`
+      : `${type}-${referenceNumber}`,
     relationshipType: type,
+    batchNumber, // Store batch number in the group
     files: groupFiles,
     confidence: 90, // High confidence for reference-based grouping
     completeness: {
@@ -299,7 +397,7 @@ function createRelationshipGroup(
 /**
  * Detect document sequences (Page 1 of 3, Part 1, etc.)
  */
-function detectSequences(files: File[]): FileRelationship[] {
+function detectSequences(files: File[], batchNumber?: string): FileRelationship[] {
   const sequenceGroups: FileRelationship[] = [];
   const processedFiles = new Set<File>();
   
@@ -348,9 +446,7 @@ function detectSequences(files: File[]): FileRelationship[] {
         break;
       }
     }
-  }
-  
-  // Create groups from base name matches
+  }  // Create groups from base name matches
   for (const [baseName, fileInfos] of baseNameGroups.entries()) {
     if (fileInfos.length > 1) {
       // Sort by sequence number
@@ -369,8 +465,11 @@ function detectSequences(files: File[]): FileRelationship[] {
       const isComplete = missingSequences.length === 0 && fileInfos.length === expectedTotal;
       
       sequenceGroups.push({
-        groupId: `sequence-${baseName}`,
+        groupId: batchNumber 
+          ? `sequence-${batchNumber}-${baseName}`
+          : `sequence-${baseName}`,
         relationshipType: 'sequence',
+        batchNumber, // Store batch number
         files: fileInfos.map(fi => ({
           file: fi.file,
           fileName: fi.file.name,
@@ -386,9 +485,13 @@ function detectSequences(files: File[]): FileRelationship[] {
             ? missingSequences.map(n => `Page ${n}`)
             : undefined,
         },
-        suggestion: isComplete
-          ? `Complete sequence: ${fileInfos.length} pages`
-          : `Incomplete sequence: ${fileInfos.length} of ${expectedTotal} pages`,
+        suggestion: batchNumber
+          ? (isComplete
+            ? `Complete sequence: ${fileInfos.length} pages (Batch ${batchNumber})`
+            : `Incomplete sequence: ${fileInfos.length} of ${expectedTotal} pages (Batch ${batchNumber})`)
+          : (isComplete
+            ? `Complete sequence: ${fileInfos.length} pages`
+            : `Incomplete sequence: ${fileInfos.length} of ${expectedTotal} pages`),
         warnings: !isComplete
           ? [`Missing pages: ${missingSequences.join(', ')}`]
           : undefined,
@@ -449,7 +552,8 @@ function detectSequenceInfo(files: File[]): {
  */
 function detectPoInvoiceSets(
   files: File[],
-  references: Map<File, { po?: string[]; so?: string[]; batch?: string[] }>
+  references: Map<File, { po?: string[]; so?: string[]; batch?: string[] }>,
+  batchNumber?: string
 ): FileRelationship[] {
   const sets: FileRelationship[] = [];
   
@@ -473,8 +577,11 @@ function detectPoInvoiceSets(
     // If we have both PO and invoices, create a relationship
     if (poFiles.length > 0 && invoiceFiles.length > 0) {
       sets.push({
-        groupId: `po-invoice-${poNumber}`,
+        groupId: batchNumber
+          ? `po-invoice-${batchNumber}-${poNumber}`
+          : `po-invoice-${poNumber}`,
         relationshipType: 'po-invoice-set',
+        batchNumber, // Store batch number
         files: [...poFiles, ...invoiceFiles].map(file => ({
           file,
           fileName: file.name,
@@ -487,7 +594,9 @@ function detectPoInvoiceSets(
         completeness: {
           isComplete: true, // We have at least one of each
         },
-        suggestion: `PO ${poNumber} with ${invoiceFiles.length} related invoice(s)`,
+        suggestion: batchNumber
+          ? `PO ${poNumber} with ${invoiceFiles.length} related invoice(s) (Batch ${batchNumber})`
+          : `PO ${poNumber} with ${invoiceFiles.length} related invoice(s)`,
       });
     }
   }
