@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { FscRecord, SortConfig, DocType, ManagedFile, AuthState, AppSettings } from '../types';
-import { FolderKanban, ChevronsUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronUp, Upload, CheckCircle, AlertTriangle, RotateCw } from 'lucide-react';
+import { FolderKanban, ChevronsUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronUp, Upload, CheckCircle, AlertTriangle, RotateCw, Settings } from 'lucide-react';
 import { DocStatusIcons } from './DocStatusIcons';
 import { FileManagementRow } from './FileManagementRow';
 import { OneDriveService } from '../services/oneDriveService';
 import { LocalStorageService } from '../services/localStorageService';
 import { calculateBatchCompletion, getCompletionSummary } from '../utils/batchCompletion';
+import { columnPreferences, ColumnPreferences, DocColumnId } from '../utils/columnPreferences';
 
 interface DataTableProps {
   data: FscRecord[];
@@ -237,6 +238,28 @@ export const DataTable: React.FC<DataTableProps> = ({
   ]);
   const [draggedColumn, setDraggedColumn] = useState<keyof FscRecord | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<keyof FscRecord | null>(null);
+  const [columnPrefs, setColumnPrefs] = useState<ColumnPreferences>(columnPreferences.getDefaultPreferences());
+  const [showColumnSettings, setShowColumnSettings] = useState<boolean>(false);
+  const [columnPrefsLoaded, setColumnPrefsLoaded] = useState<boolean>(false);
+
+  // Load column preferences on mount
+  useEffect(() => {
+    const loadColumnPrefs = async () => {
+      const prefs = await columnPreferences.loadPreferences();
+      setColumnPrefs(prefs);
+      setColumnPrefsLoaded(true);
+    };
+    loadColumnPrefs();
+  }, []);
+
+  // Save column preferences when they change
+  useEffect(() => {
+    if (!columnPrefsLoaded) return;
+    const saveColumnPrefs = async () => {
+      await columnPreferences.savePreferences(columnPrefs);
+    };
+    saveColumnPrefs();
+  }, [columnPrefs, columnPrefsLoaded]);
 
   // Load column order from localStorage on mount
   React.useEffect(() => {
@@ -353,8 +376,96 @@ export const DataTable: React.FC<DataTableProps> = ({
     return String(content);
   };
 
+  const handleToggleColumnVisibility = (columnId: DocColumnId) => {
+    setColumnPrefs(prev => columnPreferences.toggleVisibility(prev, columnId));
+  };
+
+  const handleResetColumns = async () => {
+    const defaults = await columnPreferences.resetToDefaults();
+    setColumnPrefs(defaults);
+  };
+
+  const handleColumnReorder = (fromIndex: number, toIndex: number) => {
+    // Simple reorder for the modal list display
+    const newColumns = [...columnPrefs.docColumns];
+    const [removed] = newColumns.splice(fromIndex, 1);
+    newColumns.splice(toIndex, 0, removed);
+    setColumnPrefs({ docColumns: newColumns });
+  };
+
   return (
     <div className="overflow-x-auto">
+      {/* Column Settings Button */}
+      <div className="flex justify-end mb-2">
+        <button
+          onClick={() => setShowColumnSettings(true)}
+          className="flex items-center space-x-2 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition"
+        >
+          <Settings className="h-4 w-4" />
+          <span>Customize Columns</span>
+        </button>
+      </div>
+
+      {/* Column Settings Modal */}
+      {showColumnSettings && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold text-gray-900">Customize Columns</h3>
+                <button
+                  onClick={() => setShowColumnSettings(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="mb-4">
+                <p className="text-sm text-gray-600 mb-3">
+                  Show/hide document columns
+                </p>
+                <div className="space-y-2">
+                  {columnPrefs.docColumns.map((col, index) => (
+                    <div
+                      key={col.id}
+                      className="flex items-center space-x-3 p-2 bg-gray-50 rounded hover:bg-gray-100"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={col.visible}
+                        onChange={() => handleToggleColumnVisibility(col.id)}
+                        className="h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
+                      />
+                      <label className="flex-1 text-sm text-gray-700 cursor-pointer" onClick={() => handleToggleColumnVisibility(col.id)}>
+                        {col.label}
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-between pt-4 border-t">
+                <button
+                  onClick={handleResetColumns}
+                  className="px-4 py-2 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md transition"
+                >
+                  Reset to Default
+                </button>
+                <button
+                  onClick={() => setShowColumnSettings(false)}
+                  className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-md transition"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Desktop Table */}
       <table className="min-w-full divide-y divide-gray-200 hidden md:table">
         <thead className="bg-gray-50">
@@ -382,11 +493,21 @@ export const DataTable: React.FC<DataTableProps> = ({
                 </button>
               </th>
             ))}
-            <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">PO</th>
-            <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">SO</th>
-            <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier Invoice</th>
-            <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Customer Invoice</th>
-            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Completion</th>
+            {columnPrefs.docColumns.find(c => c.id === 'PO')?.visible && (
+              <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">PO</th>
+            )}
+            {columnPrefs.docColumns.find(c => c.id === 'SO')?.visible && (
+              <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">SO</th>
+            )}
+            {columnPrefs.docColumns.find(c => c.id === 'SupplierInvoice')?.visible && (
+              <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier Invoice</th>
+            )}
+            {columnPrefs.docColumns.find(c => c.id === 'CustomerInvoice')?.visible && (
+              <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Customer Invoice</th>
+            )}
+            {columnPrefs.docColumns.find(c => c.id === 'Completion')?.visible && (
+              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Completion</th>
+            )}
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
@@ -398,54 +519,64 @@ export const DataTable: React.FC<DataTableProps> = ({
                     {renderCellContent(record[header], header)}
                   </td>
                 ))}
-                <FileUploadCell
-                  record={record}
-                  docType={DocType.PO}
-                  files={managedFiles[record.id]?.[DocType.PO] || []}
-                  onFileAdd={fileHandlers.add}
-                  appSettings={appSettings}
-                  oneDriveService={oneDriveService}
-                  localStorageService={localStorageService}
-                  oneDriveBasePath={oneDriveBasePath}
-                />
-                <FileUploadCell
-                  record={record}
-                  docType={DocType.SO}
-                  files={managedFiles[record.id]?.[DocType.SO] || []}
-                  onFileAdd={fileHandlers.add}
-                  appSettings={appSettings}
-                  oneDriveService={oneDriveService}
-                  localStorageService={localStorageService}
-                  oneDriveBasePath={oneDriveBasePath}
-                />
-                <FileUploadCell
-                  record={record}
-                  docType={DocType.SupplierInvoice}
-                  files={managedFiles[record.id]?.[DocType.SupplierInvoice] || []}
-                  onFileAdd={fileHandlers.add}
-                  appSettings={appSettings}
-                  oneDriveService={oneDriveService}
-                  localStorageService={localStorageService}
-                  oneDriveBasePath={oneDriveBasePath}
-                />
-                <FileUploadCell
-                  record={record}
-                  docType={DocType.CustomerInvoice}
-                  files={managedFiles[record.id]?.[DocType.CustomerInvoice] || []}
-                  onFileAdd={fileHandlers.add}
-                  appSettings={appSettings}
-                  oneDriveService={oneDriveService}
-                  localStorageService={localStorageService}
-                  oneDriveBasePath={oneDriveBasePath}
-                />
-                <td className="px-6 py-4 text-sm text-gray-500">
-                  <BatchProgressBar
+                {columnPrefs.docColumns.find(c => c.id === 'PO')?.visible && (
+                  <FileUploadCell
                     record={record}
+                    docType={DocType.PO}
+                    files={managedFiles[record.id]?.[DocType.PO] || []}
+                    onFileAdd={fileHandlers.add}
                     appSettings={appSettings}
                     oneDriveService={oneDriveService}
                     localStorageService={localStorageService}
+                    oneDriveBasePath={oneDriveBasePath}
                   />
-                </td>
+                )}
+                {columnPrefs.docColumns.find(c => c.id === 'SO')?.visible && (
+                  <FileUploadCell
+                    record={record}
+                    docType={DocType.SO}
+                    files={managedFiles[record.id]?.[DocType.SO] || []}
+                    onFileAdd={fileHandlers.add}
+                    appSettings={appSettings}
+                    oneDriveService={oneDriveService}
+                    localStorageService={localStorageService}
+                    oneDriveBasePath={oneDriveBasePath}
+                  />
+                )}
+                {columnPrefs.docColumns.find(c => c.id === 'SupplierInvoice')?.visible && (
+                  <FileUploadCell
+                    record={record}
+                    docType={DocType.SupplierInvoice}
+                    files={managedFiles[record.id]?.[DocType.SupplierInvoice] || []}
+                    onFileAdd={fileHandlers.add}
+                    appSettings={appSettings}
+                    oneDriveService={oneDriveService}
+                    localStorageService={localStorageService}
+                    oneDriveBasePath={oneDriveBasePath}
+                  />
+                )}
+                {columnPrefs.docColumns.find(c => c.id === 'CustomerInvoice')?.visible && (
+                  <FileUploadCell
+                    record={record}
+                    docType={DocType.CustomerInvoice}
+                    files={managedFiles[record.id]?.[DocType.CustomerInvoice] || []}
+                    onFileAdd={fileHandlers.add}
+                    appSettings={appSettings}
+                    oneDriveService={oneDriveService}
+                    localStorageService={localStorageService}
+                    oneDriveBasePath={oneDriveBasePath}
+                  />
+                )}
+                {columnPrefs.docColumns.find(c => c.id === 'Completion')?.visible && (
+                  <td className="px-6 py-4 text-sm text-gray-500">
+                    <BatchProgressBar
+                      record={record}
+                      appSettings={appSettings}
+                      oneDriveService={oneDriveService}
+                      localStorageService={localStorageService}
+                    />
+                  </td>
+                )}
               </tr>
             </React.Fragment>
           ))}

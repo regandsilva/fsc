@@ -10,6 +10,7 @@ import { OneDriveService } from './services/oneDriveService';
 import { LocalStorageService, ScanResult } from './services/localStorageService';
 import { electronStore } from './utils/electronStore';
 import { calculateBatchCompletion, hasMissingDocType } from './utils/batchCompletion';
+import { filterPersistence } from './utils/filterPersistence';
 
 // A more robust date parser that handles both YYYY-MM-DD and D/M/YYYY formats.
 const parseDateToUTC = (dateStr: string): Date | null => {
@@ -76,10 +77,12 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(true);
   
+  // Initialize filters with default values - will be loaded from storage
   const [textFilter, setTextFilter] = useState<string>('');
   const [dateFilter, setDateFilter] = useState<DateFilter>({ operator: 'exact', date1: '', date2: '' });
   const [createdDateFilter, setCreatedDateFilter] = useState<DateFilter>({ operator: 'exact', date1: '', date2: '' });
   const [smartFilter, setSmartFilter] = useState<'all' | 'missing-po' | 'missing-so' | 'missing-supplier-inv' | 'missing-customer-inv' | 'complete' | 'incomplete'>('all');
+  const [filtersLoaded, setFiltersLoaded] = useState<boolean>(false);
   
   const debouncedTextFilter = useDebounce(textFilter, 300);
   
@@ -110,6 +113,46 @@ const App: React.FC = () => {
     };
     loadSettings();
   }, []);
+
+  // Load filters from persistent storage on mount
+  useEffect(() => {
+    const loadFilters = async () => {
+      try {
+        const savedFilters = await filterPersistence.loadFilters();
+        if (savedFilters) {
+          setSmartFilter(savedFilters.smartFilter);
+          setTextFilter(savedFilters.textFilter);
+          setDateFilter(savedFilters.dateFilter);
+          setCreatedDateFilter(savedFilters.createdDateFilter);
+        }
+      } catch (error) {
+        console.error('Error loading filters:', error);
+      } finally {
+        setFiltersLoaded(true);
+      }
+    };
+    loadFilters();
+  }, []);
+
+  // Save filters to persistent storage whenever they change
+  useEffect(() => {
+    // Only save after filters have been loaded from storage
+    if (!filtersLoaded) return;
+
+    const saveFilters = async () => {
+      try {
+        await filterPersistence.saveFilters({
+          smartFilter,
+          textFilter,
+          dateFilter,
+          createdDateFilter,
+        });
+      } catch (error) {
+        console.error('Error saving filters:', error);
+      }
+    };
+    saveFilters();
+  }, [smartFilter, textFilter, dateFilter, createdDateFilter, filtersLoaded]);
 
   // Save settings to persistent storage whenever they change
   useEffect(() => {
@@ -486,7 +529,11 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen text-gray-800 transition-colors duration-300">
-      <Header onToggleSettings={() => setIsSettingsOpen(!isSettingsOpen)} />
+      <Header 
+        onToggleSettings={() => setIsSettingsOpen(!isSettingsOpen)}
+        onRefresh={handleFetchData}
+        isRefreshing={isLoading}
+      />
       
       <SettingsPanel
         isOpen={isSettingsOpen}
