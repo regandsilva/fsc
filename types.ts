@@ -14,23 +14,8 @@ export interface AppSettings {
   apiKey: string;
   baseId: string;
   tableName: string;
-  msalClientId: string;
   /**
-   * Azure AD authority to use for MSAL authentication.
-   * Examples:
-   *  - common (multi-tenant + personal)
-   *  - organizations (work/school only)
-   *  - consumers (personal accounts only)
-   *  - <tenant-id or domain>
-   */
-  azureAuthority?: string;
-  oneDriveBasePath: string;
-  /**
-   * Storage mode: 'onedrive' or 'local'
-   */
-  storageMode: 'onedrive' | 'local';
-  /**
-   * Local folder path for saving documents when storageMode is 'local'
+   * Local folder path for saving documents
    */
   localStoragePath: string;
 }
@@ -62,14 +47,3 @@ export interface DateFilter {
   date2: string;
 }
 
-export interface OneDriveUser {
-    name?: string | null;
-    email: string;
-}
-
-export interface AuthState {
-    isAuthenticated: boolean;
-    user: OneDriveUser | null;
-    error: string | null;
-    loading: boolean;
-}

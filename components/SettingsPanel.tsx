@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { saveDirectoryHandle } from '../utils/dirHandleStore';
-import { AppSettings, AuthState } from '../types';
-import { X, LogIn, LogOut, RotateCw } from './Icons';
+import { AppSettings } from '../types';
+import { X, RotateCw } from './Icons';
 import type { ScanProgress, ScanResult } from '../services/localStorageService';
 
 interface SettingsPanelProps {
@@ -10,9 +10,6 @@ interface SettingsPanelProps {
   setSettings: React.Dispatch<React.SetStateAction<AppSettings>>;
   onFetchData: () => void;
   onClose: () => void;
-  authState: AuthState;
-  onLogin: () => void;
-  onLogout: () => void;
   onScanAndRebuild?: () => Promise<ScanResult>;
 }
 
@@ -22,9 +19,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   setSettings, 
   onFetchData, 
   onClose, 
-  authState, 
-  onLogin, 
-  onLogout,
   onScanAndRebuild
 }) => {
   const isElectron = typeof window !== 'undefined' && (window as any).electron?.isElectron;
@@ -147,156 +141,71 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             </div>
           </div>
 
-          {/* Storage Mode Selection */}
+          {/* Storage Settings */}
           <div className="border-b pb-6">
             <h3 className="text-lg font-semibold text-gray-800 mb-4">Document Storage</h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Storage Mode</label>
-                <div className="space-y-2">
-                  <label className="flex items-center space-x-3 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="storageMode"
-                      value="onedrive"
-                      checked={settings.storageMode === 'onedrive'}
-                      onChange={(e) => setSettings(prev => ({ ...prev, storageMode: e.target.value as 'onedrive' | 'local' }))}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500"
-                    />
-                    <span className="text-sm text-gray-700">OneDrive (Cloud Storage)</span>
-                  </label>
-                  <label className="flex items-center space-x-3 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="storageMode"
-                      value="local"
-                      checked={settings.storageMode === 'local'}
-                      onChange={(e) => setSettings(prev => ({ ...prev, storageMode: e.target.value as 'onedrive' | 'local' }))}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500"
-                      disabled={!canUseLocalFolder}
-                    />
-                    <span className={`text-sm ${!canUseLocalFolder ? 'text-gray-400' : 'text-gray-700'}`}>
-                      Local PC Folder{!canUseLocalFolder ? ' (Not supported in this browser)' : ''}
-                    </span>
-                  </label>
+                <label htmlFor="localStoragePath" className="block text-sm font-medium text-gray-700">Local Storage Folder</label>
+                <div className="mt-1 flex space-x-2">
+                  <input
+                    type="text"
+                    name="localStoragePath"
+                    id="localStoragePath"
+                    value={settings.localStoragePath || ''}
+                    onChange={handleChange}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-gray-50"
+                    placeholder="Select a folder..."
+                  />
+                  <button
+                    onClick={handleSelectFolder}
+                    className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 text-sm"
+                  >
+                    Browse
+                  </button>
                 </div>
-                <p className="mt-2 text-xs text-gray-500">
-                  Choose where to save uploaded documents
+                <p className="mt-1 text-xs text-gray-500">
+                  Folders will be created automatically in the selected folder: {'{'}BatchNumber{'}'}/{'{'}DocType{'}'}
                 </p>
-              </div>
-
-              {settings.storageMode === 'local' && (
-                <div>
-                  <label htmlFor="localStoragePath" className="block text-sm font-medium text-gray-700">Local Storage Folder</label>
-                  <div className="mt-1 flex space-x-2">
-                    <input
-                      type="text"
-                      name="localStoragePath"
-                      id="localStoragePath"
-                      value={settings.localStoragePath || ''}
-                      onChange={handleChange}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-gray-50"
-                      placeholder="Select a folder..."
-                    />
+                {!canUseLocalFolder && (
+                  <p className="mt-1 text-xs text-red-600">
+                    Your browser doesn't support selecting a local folder. Try a Chromium-based browser (Chrome/Edge) or use the desktop app.
+                  </p>
+                )}
+                
+                {/* Scan & Rebuild Button */}
+                {settings.localStoragePath && onScanAndRebuild && (
+                  <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                    <p className="text-xs text-blue-800 font-medium mb-2">
+                      🔍 Upload History Maintenance
+                    </p>
+                    <p className="text-xs text-blue-700 mb-3">
+                      Scan your local folder to rebuild the upload history log from actual files.
+                    </p>
                     <button
-                      onClick={handleSelectFolder}
-                      className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 text-sm"
+                      onClick={handleScanAndRebuild}
+                      disabled={isScanning}
+                      className="w-full flex items-center justify-center space-x-2 bg-blue-600 text-white font-medium py-2 px-3 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:bg-gray-400 disabled:cursor-not-allowed"
                     >
-                      Browse
+                      {isScanning ? (
+                        <>
+                          <RotateCw className="h-4 w-4 animate-spin" />
+                          <span>Scanning...</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                          <span>Scan & Rebuild Upload History</span>
+                        </>
+                      )}
                     </button>
                   </div>
-                  <p className="mt-1 text-xs text-gray-500">
-                    Folders will be created automatically in the selected folder: {'{'}BatchNumber{'}'}/{'{'}DocType{'}'}
-                  </p>
-                  {!canUseLocalFolder && (
-                    <p className="mt-1 text-xs text-red-600">
-                      Your browser doesn't support selecting a local folder. Try a Chromium-based browser (Chrome/Edge) or use the desktop app.
-                    </p>
-                  )}
-                  
-                  {/* Scan & Rebuild Button */}
-                  {settings.localStoragePath && onScanAndRebuild && (
-                    <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
-                      <p className="text-xs text-blue-800 font-medium mb-2">
-                        🔍 Upload History Maintenance
-                      </p>
-                      <p className="text-xs text-blue-700 mb-3">
-                        Scan your local folder to rebuild the upload history log from actual files.
-                      </p>
-                      <button
-                        onClick={handleScanAndRebuild}
-                        disabled={isScanning}
-                        className="w-full flex items-center justify-center space-x-2 bg-blue-600 text-white font-medium py-2 px-3 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:bg-gray-400 disabled:cursor-not-allowed"
-                      >
-                        {isScanning ? (
-                          <>
-                            <RotateCw className="h-4 w-4 animate-spin" />
-                            <span>Scanning...</span>
-                          </>
-                        ) : (
-                          <>
-                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                            </svg>
-                            <span>Scan & Rebuild Upload History</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* OneDrive Settings - Only show if storageMode is onedrive */}
-          {settings.storageMode === 'onedrive' && (
-          <div className="pt-2">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">OneDrive Integration</h3>
-            <div className="space-y-4">
-               <div>
-                <label htmlFor="msalClientId" className="block text-sm font-medium text-gray-700">Application (Client) ID</label>
-                <input type="text" name="msalClientId" id="msalClientId" value={settings.msalClientId} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-gray-50" placeholder="Enter your Azure App Client ID"/>
-                <p className="mt-1 text-xs text-gray-500">Required for OneDrive login. Create one in your Azure Portal.</p>
-              </div>
-
-              <div>
-                <label htmlFor="azureAuthority" className="block text-sm font-medium text-gray-700">Azure Authority (Tenant)</label>
-                <select name="azureAuthority" id="azureAuthority" value={settings.azureAuthority ?? 'common'} onChange={handleSelectChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-gray-50">
-                  <option value="common">common (multi-tenant + personal)</option>
-                  <option value="organizations">organizations (work/school only)</option>
-                  <option value="consumers">consumers (personal accounts only)</option>
-                </select>
-                <p className="mt-1 text-xs text-gray-500">If your app is single-tenant, you can also enter your tenant ID or domain here instead of the presets.</p>
-                <input type="text" name="azureAuthority" value={settings.azureAuthority ?? ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-200 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white" placeholder="Optional: custom tenant (e.g., contoso.onmicrosoft.com or tenant GUID)"/>
-              </div>
-
-              {authState.isAuthenticated ? (
-                  <div className="bg-green-50 border-l-4 border-green-400 p-4 rounded-r-lg">
-                      <p className="text-sm font-medium text-green-800">Logged in as:</p>
-                      <p className="text-sm text-green-700 truncate">{authState.user?.email}</p>
-                      <button onClick={onLogout} className="mt-2 w-full flex items-center justify-center space-x-2 bg-red-500 text-white font-bold py-2 px-3 rounded-lg hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition duration-300 text-sm">
-                          <LogOut className="h-4 w-4" />
-                          <span>Logout</span>
-                      </button>
-                  </div>
-              ) : (
-                  <button onClick={onLogin} disabled={!settings.msalClientId || authState.loading} className="w-full flex items-center justify-center space-x-2 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-300 disabled:bg-gray-400">
-                      {authState.loading ? <RotateCw className="h-5 w-5 animate-spin"/> : <LogIn className="h-5 w-5"/>}
-                      <span>{authState.loading ? 'Logging in...' : 'Login to OneDrive'}</span>
-                  </button>
-              )}
-
-              {authState.error && <p className="text-sm text-red-600">{authState.error}</p>}
-              
-              <div>
-                <label htmlFor="oneDriveBasePath" className="block text-sm font-medium text-gray-700">OneDrive Base Folder Path</label>
-                <input type="text" name="oneDriveBasePath" id="oneDriveBasePath" value={settings.oneDriveBasePath} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-gray-50 disabled:bg-gray-200" placeholder="/MyFolder/Uploads" disabled={!authState.isAuthenticated}/>
-                <p className="mt-1 text-xs text-gray-500">The root folder in OneDrive for all uploads.</p>
+                )}
               </div>
             </div>
           </div>
-          )}
         </div>
 
         <button

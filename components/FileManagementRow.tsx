@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { FscRecord, ManagedFile, DocType, AuthState, AppSettings } from '../types';
+import { FscRecord, ManagedFile, DocType, AppSettings } from '../types';
 import { UploadCloud, FileText as FileIcon, Download, RotateCw, Trash2, CheckCircle, AlertTriangle } from 'lucide-react';
 import { createZip } from '../services/zipService';
-import { OneDriveService } from '../services/oneDriveService';
 import { LocalStorageService } from '../services/localStorageService';
 
 interface FileManagementRowProps {
@@ -16,9 +15,6 @@ interface FileManagementRowProps {
   };
   colSpan: number;
   isMobile?: boolean;
-  authState: AuthState;
-  oneDriveBasePath: string;
-  oneDriveService: OneDriveService | null;
   appSettings: AppSettings;
   localStorageService: LocalStorageService | null;
 }
@@ -43,9 +39,6 @@ export const FileManagementRow: React.FC<FileManagementRowProps> = ({
     fileHandlers, 
     colSpan, 
     isMobile,
-    authState,
-    oneDriveBasePath,
-    oneDriveService,
     appSettings,
     localStorageService
 }) => {
@@ -64,34 +57,6 @@ export const FileManagementRow: React.FC<FileManagementRowProps> = ({
   };
 
   const handleUploadSingleFile = async (file: File, docType: DocType) => {
-    // Check storage mode
-    if (appSettings.storageMode === 'local') {
-      return handleUploadSingleFileLocal(file, docType);
-    } else {
-      return handleUploadSingleFileOneDrive(file, docType);
-    }
-  };
-
-  const handleUploadSingleFileOneDrive = async (file: File, docType: DocType) => {
-    if (!oneDriveService || !oneDriveBasePath) {
-      setUploadStatus({ state: 'error', message: 'OneDrive service is not configured.' });
-      return;
-    }
-
-    const path = `${oneDriveBasePath}/Batch_${record['Batch number']}/${folderMap[docType]}/${file.name}`;
-    
-    setUploadStatus({ state: 'uploading', message: `Uploading ${file.name}...` });
-    
-    try {
-      await oneDriveService.uploadFile(file, path);
-      setUploadStatus({ state: 'success', message: `Uploaded ${file.name}` });
-      setTimeout(() => setUploadStatus({ state: 'idle', message: '' }), 3000);
-    } catch (error) {
-      setUploadStatus({ state: 'error', message: `Failed to upload ${file.name}: ${(error as Error).message}` });
-    }
-  };
-
-  const handleUploadSingleFileLocal = async (file: File, docType: DocType) => {
     if (!localStorageService || !appSettings.localStoragePath) {
       setUploadStatus({ state: 'error', message: 'Local storage is not configured. Please select a folder in settings.' });
       return;
@@ -107,6 +72,7 @@ export const FileManagementRow: React.FC<FileManagementRowProps> = ({
       setUploadStatus({ state: 'error', message: `Failed to save ${file.name}: ${(error as Error).message}` });
     }
   };
+
   const handleDownloadZip = async () => {
     setIsZipping(true);
     try {

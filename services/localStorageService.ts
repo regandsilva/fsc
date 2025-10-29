@@ -228,11 +228,24 @@ export class LocalStorageService {
   }
 
   /**
+   * Ensure upload history is loaded (public method for duplicate detection)
+   */
+  public async ensureHistoryLoaded(basePath: string): Promise<void> {
+    if (this.basePath !== basePath || this.uploadHistory.size === 0) {
+      this.basePath = basePath;
+      await this.loadUploadHistory(basePath);
+      console.log(`📚 Upload history loaded: ${this.uploadHistory.size} records`);
+    }
+  }
+
+  /**
    * Check if a file has already been uploaded
    */
   public isFileUploaded(batchNumber: string | number, docType: DocType, fileName: string): boolean {
     const key = this.getFileKey(String(batchNumber), docType, fileName);
-    return this.uploadHistory.has(key);
+    const exists = this.uploadHistory.has(key);
+    console.log(`🔍 Checking if file exists: ${fileName} in batch ${batchNumber}, docType ${docType} = ${exists}`);
+    return exists;
   }
 
   /**

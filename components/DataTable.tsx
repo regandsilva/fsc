@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { FscRecord, SortConfig, DocType, ManagedFile, AuthState, AppSettings } from '../types';
+import { FscRecord, SortConfig, DocType, ManagedFile, AppSettings } from '../types';
 import { FolderKanban, ChevronsUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronUp, Upload, CheckCircle, AlertTriangle, RotateCw, Settings } from 'lucide-react';
 import { DocStatusIcons } from './DocStatusIcons';
 import { FileManagementRow } from './FileManagementRow';
-import { OneDriveService } from '../services/oneDriveService';
 import { LocalStorageService } from '../services/localStorageService';
 import { calculateBatchCompletion, getCompletionSummary } from '../utils/batchCompletion';
 import { columnPreferences, ColumnPreferences, ColumnId, AirtableColumnId, AppColumnId } from '../utils/columnPreferences';
@@ -21,11 +20,9 @@ interface DataTableProps {
     toggleComplete: (recordId: string, docType: DocType, fileId: number) => void;
     rename: (recordId: string, docType: DocType, fileId: number, newName: string) => void;
   };
-  authState: AuthState;
-  oneDriveBasePath: string;
-  oneDriveService: OneDriveService | null;
   appSettings: AppSettings;
   localStorageService: LocalStorageService | null;
+  onBulkUpload?: () => void;
 }
 
 const emptyFiles: Record<DocType, ManagedFile[]> = {
@@ -45,21 +42,18 @@ const folderMap: Record<DocType, string> = {
 interface BatchProgressBarProps {
   record: FscRecord;
   appSettings: AppSettings;
-  oneDriveService: OneDriveService | null;
   localStorageService: LocalStorageService | null;
 }
 
 const BatchProgressBar: React.FC<BatchProgressBarProps> = ({
   record,
   appSettings,
-  oneDriveService,
   localStorageService
 }) => {
   const getUploadedCount = (batchNumber: string, docType: DocType): number => {
-    if (appSettings.storageMode === 'local' && localStorageService) {
+    if (localStorageService) {
       return localStorageService.getUploadedFileCount(batchNumber, docType);
     }
-    // OneDrive count logic would go here if needed
     return 0;
   };
 
@@ -104,9 +98,7 @@ interface FileUploadCellProps {
   files: ManagedFile[];
   onFileAdd: (recordId: string, docType: DocType, file: File) => void;
   appSettings: AppSettings;
-  oneDriveService: OneDriveService | null;
   localStorageService: LocalStorageService | null;
-  oneDriveBasePath: string;
 }
 
 const FileUploadCell: React.FC<FileUploadCellProps> = ({
@@ -115,24 +107,22 @@ const FileUploadCell: React.FC<FileUploadCellProps> = ({
   files,
   onFileAdd,
   appSettings,
-  oneDriveService,
-  localStorageService,
-  oneDriveBasePath
+  localStorageService
 }) => {
   const [uploading, setUploading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [uploadedCount, setUploadedCount] = useState(0);
 
-  // Load uploaded count on mount and when storage mode/service changes
+  // Load uploaded count on mount
   React.useEffect(() => {
-    if (appSettings.storageMode === 'local' && localStorageService) {
+    if (localStorageService) {
       const batchNumber = record['Batch number'];
       if (batchNumber) {
         const count = localStorageService.getUploadedFileCount(batchNumber, docType);
         setUploadedCount(count);
       }
     }
-  }, [appSettings.storageMode, localStorageService, record, docType]);
+  }, [localStorageService, record, docType]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -145,23 +135,15 @@ const FileUploadCell: React.FC<FileUploadCellProps> = ({
       setStatus('idle');
       
       try {
-        if (appSettings.storageMode === 'local') {
-          if (!localStorageService || !appSettings.localStoragePath) {
-            throw new Error('Local storage not configured');
-          }
-          await localStorageService.uploadFile(record, file, docType, appSettings.localStoragePath);
-          // Update count after successful upload
-          const batchNumber = record['Batch number'];
-          if (batchNumber) {
-            const count = localStorageService.getUploadedFileCount(batchNumber, docType);
-            setUploadedCount(count);
-          }
-        } else {
-          if (!oneDriveService || !oneDriveBasePath) {
-            throw new Error('OneDrive not configured');
-          }
-          const path = `${oneDriveBasePath}/Batch_${record['Batch number']}/${folderMap[docType]}/${file.name}`;
-          await oneDriveService.uploadFile(file, path);
+        if (!localStorageService || !appSettings.localStoragePath) {
+          throw new Error('Local storage not configured');
+        }
+        await localStorageService.uploadFile(record, file, docType, appSettings.localStoragePath);
+        // Update count after successful upload
+        const batchNumber = record['Batch number'];
+        if (batchNumber) {
+          const count = localStorageService.getUploadedFileCount(batchNumber, docType);
+          setUploadedCount(count);
         }
         setStatus('success');
         setTimeout(() => setStatus('idle'), 2000);
@@ -174,8 +156,7 @@ const FileUploadCell: React.FC<FileUploadCellProps> = ({
     }
   };
 
-  // For local storage, use uploadedCount; for OneDrive use files.length
-  const fileCount = appSettings.storageMode === 'local' ? uploadedCount : files.length;
+  const fileCount = uploadedCount;
   const hasFiles = fileCount > 0;
 
   return (
@@ -220,11 +201,9 @@ export const DataTable: React.FC<DataTableProps> = ({
   onToggleExpand, 
   managedFiles, 
   fileHandlers,
-  authState,
-  oneDriveBasePath,
-  oneDriveService,
   appSettings,
-  localStorageService
+  localStorageService,
+  onBulkUpload
 }) => {
   const [columnOrder, setColumnOrder] = useState<(keyof FscRecord)[]>([
     'Batch number',
@@ -432,8 +411,17 @@ export const DataTable: React.FC<DataTableProps> = ({
 
   return (
     <div className="overflow-x-auto">
-      {/* Column Settings Button */}
-      <div className="flex justify-end mb-2">
+      {/* Bulk Upload and Column Settings Buttons */}
+      <div className="flex justify-end gap-2 mb-2">
+        {onBulkUpload && (
+          <button
+            onClick={onBulkUpload}
+            className="flex items-center space-x-2 px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md transition"
+          >
+            <Upload className="h-4 w-4" />
+            <span>Bulk Upload</span>
+          </button>
+        )}
         <button
           onClick={() => setShowColumnSettings(true)}
           className="flex items-center space-x-2 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition"
@@ -769,9 +757,9 @@ export const DataTable: React.FC<DataTableProps> = ({
                       files={managedFiles[record.id]?.[DocType.PO] || []}
                       onFileAdd={fileHandlers.add}
                       appSettings={appSettings}
-                      oneDriveService={oneDriveService}
+
                       localStorageService={localStorageService}
-                      oneDriveBasePath={oneDriveBasePath}
+
                     />
                   );
                 })()}
@@ -784,9 +772,9 @@ export const DataTable: React.FC<DataTableProps> = ({
                       files={managedFiles[record.id]?.[DocType.SO] || []}
                       onFileAdd={fileHandlers.add}
                       appSettings={appSettings}
-                      oneDriveService={oneDriveService}
+
                       localStorageService={localStorageService}
-                      oneDriveBasePath={oneDriveBasePath}
+
                     />
                   );
                 })()}
@@ -799,9 +787,9 @@ export const DataTable: React.FC<DataTableProps> = ({
                       files={managedFiles[record.id]?.[DocType.SupplierInvoice] || []}
                       onFileAdd={fileHandlers.add}
                       appSettings={appSettings}
-                      oneDriveService={oneDriveService}
+
                       localStorageService={localStorageService}
-                      oneDriveBasePath={oneDriveBasePath}
+
                     />
                   );
                 })()}
@@ -814,9 +802,9 @@ export const DataTable: React.FC<DataTableProps> = ({
                       files={managedFiles[record.id]?.[DocType.CustomerInvoice] || []}
                       onFileAdd={fileHandlers.add}
                       appSettings={appSettings}
-                      oneDriveService={oneDriveService}
+
                       localStorageService={localStorageService}
-                      oneDriveBasePath={oneDriveBasePath}
+
                     />
                   );
                 })()}
@@ -834,7 +822,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                       <BatchProgressBar
                         record={record}
                         appSettings={appSettings}
-                        oneDriveService={oneDriveService}
+
                         localStorageService={localStorageService}
                       />
                     </td>
@@ -870,7 +858,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                 <BatchProgressBar
                   record={record}
                   appSettings={appSettings}
-                  oneDriveService={oneDriveService}
+
                   localStorageService={localStorageService}
                 />
             </div>
@@ -887,9 +875,9 @@ export const DataTable: React.FC<DataTableProps> = ({
                         fileHandlers={fileHandlers}
                         colSpan={1} // Not applicable here, but required by prop
                         isMobile={true}
-                        authState={authState}
-                        oneDriveBasePath={oneDriveBasePath}
-                        oneDriveService={oneDriveService}
+
+
+
                         appSettings={appSettings}
                         localStorageService={localStorageService}
                     />

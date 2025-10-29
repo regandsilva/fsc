@@ -2,15 +2,17 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Header } from './components/Header';
 import { SettingsPanel } from './components/SettingsPanel';
 import { DataTable } from './components/DataTable';
-import { FscRecord, AppSettings, SortConfig, DateFilter, DocType, ManagedFile, AuthState } from './types';
+import { BulkUploadModal } from './components/BulkUploadModal';
+import { DuplicateResolutionModal } from './components/DuplicateResolutionModal';
+import { FscRecord, AppSettings, SortConfig, DateFilter, DocType, ManagedFile } from './types';
 import { fetchFscRecords } from './services/airtableService';
 import { useDebounce } from './hooks/useDebounce';
 import { FilterControls } from './components/FilterControls';
-import { OneDriveService } from './services/oneDriveService';
 import { LocalStorageService, ScanResult } from './services/localStorageService';
 import { electronStore } from './utils/electronStore';
 import { calculateBatchCompletion, hasMissingDocType } from './utils/batchCompletion';
 import { filterPersistence } from './utils/filterPersistence';
+import { detectDuplicates, applyVersioning, DuplicateFile } from './utils/duplicateHandler';
 
 // A more robust date parser that handles both YYYY-MM-DD and D/M/YYYY formats.
 const parseDateToUTC = (dateStr: string): Date | null => {
@@ -66,10 +68,6 @@ const App: React.FC = () => {
     apiKey: '',
     baseId: '',
     tableName: '',
-    msalClientId: '',
-    azureAuthority: 'common',
-    oneDriveBasePath: '/FSC_Uploads',
-    storageMode: 'onedrive',
     localStoragePath: '',
   });
   const [data, setData] = useState<FscRecord[]>([]);
@@ -89,15 +87,12 @@ const App: React.FC = () => {
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: null, direction: 'ascending' });
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
   const [allManagedFiles, setAllManagedFiles] = useState<Record<string, Record<DocType, ManagedFile[]>>>({});
+  const [showBulkUploadModal, setShowBulkUploadModal] = useState<boolean>(false);
+  const [showDuplicateModal, setShowDuplicateModal] = useState<boolean>(false);
+  const [pendingUploadPlan, setPendingUploadPlan] = useState<Map<string, Map<DocType, File[]>> | null>(null);
+  const [detectedDuplicates, setDetectedDuplicates] = useState<DuplicateFile[]>([]);
   
-  const oneDriveServiceRef = useRef<OneDriveService | null>(null);
   const localStorageServiceRef = useRef<LocalStorageService | null>(null);
-  const [authState, setAuthState] = useState<AuthState>({
-    isAuthenticated: false,
-    user: null,
-    error: null,
-    loading: false,
-  });
 
   // Load settings from persistent storage on mount
   useEffect(() => {
@@ -163,43 +158,16 @@ const App: React.FC = () => {
         console.error('Error saving settings:', error);
       }
     };
-    // Only save if settings are not empty (to avoid saving initial empty state)
-    if (appSettings.apiKey || appSettings.baseId || appSettings.tableName || appSettings.msalClientId) {
+    // Only save if settings are not empty
+    if (appSettings.apiKey || appSettings.baseId || appSettings.tableName || appSettings.localStoragePath) {
       saveSettings();
     }
   }, [appSettings]);
 
-  useEffect(() => {
-    const initializeOneDrive = async () => {
-      if (appSettings.msalClientId) {
-        try {
-          // Create service if not exists or recreate if client ID changed
-          if (!oneDriveServiceRef.current) {
-            oneDriveServiceRef.current = new OneDriveService();
-          }
-          
-          // Initialize with the client ID and selected authority (default 'common')
-          await oneDriveServiceRef.current.initialize(appSettings.msalClientId, appSettings.azureAuthority ?? 'common');
-          
-          const account = oneDriveServiceRef.current.getAccount();
-          if (account) {
-            setAuthState({ isAuthenticated: true, user: { name: account.name, email: account.username }, error: null, loading: false });
-          }
-        } catch (error) {
-          console.error('Error initializing OneDrive service:', error);
-          setAuthState({ isAuthenticated: false, user: null, error: 'Failed to initialize OneDrive', loading: false });
-        }
-      } else {
-        oneDriveServiceRef.current = null;
-      }
-    };
-    initializeOneDrive();
-  }, [appSettings.msalClientId, appSettings.azureAuthority]);
-
   // Initialize LocalStorageService
   useEffect(() => {
     const initializeLocalStorage = async () => {
-      if (appSettings.storageMode === 'local' && appSettings.localStoragePath) {
+      if (appSettings.localStoragePath) {
         if (!localStorageServiceRef.current) {
           localStorageServiceRef.current = new LocalStorageService();
         }
@@ -211,34 +179,11 @@ const App: React.FC = () => {
       }
     };
     initializeLocalStorage();
-  }, [appSettings.storageMode, appSettings.localStoragePath]);
-
-  const handleLogin = async () => {
-    if (!oneDriveServiceRef.current) {
-        setAuthState(prev => ({ ...prev, error: "MSAL Client ID is not configured." }));
-        return;
-    }
-    setAuthState(prev => ({...prev, loading: true}));
-    try {
-        const account = await oneDriveServiceRef.current.login();
-        if (account) {
-            setAuthState({ isAuthenticated: true, user: { name: account.name, email: account.username }, error: null, loading: false });
-        }
-    } catch (error) {
-        setAuthState({ isAuthenticated: false, user: null, error: (error as Error).message, loading: false });
-    }
-  };
-
-  const handleLogout = async () => {
-    if (oneDriveServiceRef.current) {
-        await oneDriveServiceRef.current.logout();
-        setAuthState({ isAuthenticated: false, user: null, error: null, loading: false });
-    }
-  };
+  }, [appSettings.localStoragePath]);
 
   const handleScanAndRebuild = async () => {
-    if (appSettings.storageMode !== 'local' || !localStorageServiceRef.current) {
-      throw new Error('Scan & Rebuild is only available for local storage mode');
+    if (!localStorageServiceRef.current) {
+      throw new Error('Local storage not initialized');
     }
 
     // Create a set of valid batch numbers from current Airtable data
@@ -369,7 +314,7 @@ const App: React.FC = () => {
     if (smartFilter !== 'all') {
       filteredItems = filteredItems.filter(record => {
         const getUploadedCount = (batchNumber: string, docType: DocType): number => {
-          if (appSettings.storageMode === 'local' && localStorageServiceRef.current) {
+          if (localStorageServiceRef.current) {
             return localStorageServiceRef.current.getUploadedFileCount(batchNumber, docType);
           }
           return 0;
@@ -421,7 +366,7 @@ const App: React.FC = () => {
       });
     }
     return filteredItems;
-  }, [data, debouncedTextFilter, dateFilter, createdDateFilter, sortConfig, smartFilter, allManagedFiles, appSettings.storageMode, localStorageServiceRef]);
+  }, [data, debouncedTextFilter, dateFilter, createdDateFilter, sortConfig, smartFilter, allManagedFiles, localStorageServiceRef]);
 
   const requestSort = (key: keyof FscRecord) => {
     let direction: 'ascending' | 'descending' = 'ascending';
@@ -483,6 +428,149 @@ const App: React.FC = () => {
     },
   };
 
+  // Bulk upload handler with duplicate detection and actual file upload
+  const handleBulkUpload = async (uploadPlan: Map<string, Map<DocType, File[]>>) => {
+    try {
+      console.log('🔍 Starting duplicate detection...');
+      console.log('📦 Upload plan:', uploadPlan);
+      
+      if (!localStorageServiceRef.current) {
+        throw new Error('Local storage service not initialized');
+      }
+      
+      // Step 1: Detect duplicates
+      const duplicateResult = await detectDuplicates(
+        uploadPlan,
+        appSettings.localStoragePath,
+        localStorageServiceRef.current
+      );
+
+      console.log('✅ Duplicate detection complete');
+      console.log('🔄 Duplicates found:', duplicateResult.duplicates.length);
+      console.log('📄 Duplicate files:', duplicateResult.duplicates);
+
+      // Step 2: If there are duplicates, show resolution modal
+      if (duplicateResult.duplicates.length > 0) {
+        console.log('🚨 Showing duplicate resolution modal');
+        setDetectedDuplicates(duplicateResult.duplicates);
+        setPendingUploadPlan(uploadPlan);
+        setShowBulkUploadModal(false);
+        setShowDuplicateModal(true);
+        return;
+      }
+
+      console.log('✨ No duplicates, proceeding with upload');
+      // Step 3: No duplicates, proceed with upload
+      await performBulkUpload(uploadPlan);
+      
+    } catch (error) {
+      console.error('Error during bulk upload:', error);
+      alert('An error occurred during bulk upload. Please try again.');
+    }
+  };
+
+  // Handle duplicate resolution
+  const handleDuplicateResolution = async (resolvedDuplicates: DuplicateFile[]) => {
+    if (!pendingUploadPlan || !localStorageServiceRef.current) return;
+
+    setShowDuplicateModal(false);
+
+    try {
+      // Apply versioning to resolved duplicates
+      const versionedFiles = await applyVersioning(
+        resolvedDuplicates,
+        appSettings.localStoragePath,
+        localStorageServiceRef.current
+      );
+
+      // Add versioned files back to the upload plan
+      for (const versionedFile of versionedFiles) {
+        if (!pendingUploadPlan.has(versionedFile.batchNumber)) {
+          pendingUploadPlan.set(versionedFile.batchNumber, new Map());
+        }
+        const batchMap = pendingUploadPlan.get(versionedFile.batchNumber)!;
+        if (!batchMap.has(versionedFile.docType)) {
+          batchMap.set(versionedFile.docType, []);
+        }
+        batchMap.get(versionedFile.docType)!.push(versionedFile.file);
+      }
+
+      // Perform the actual upload
+      await performBulkUpload(pendingUploadPlan);
+      
+      // Clear pending state
+      setPendingUploadPlan(null);
+      setDetectedDuplicates([]);
+      setShowBulkUploadModal(false);
+      
+    } catch (error) {
+      console.error('Error processing duplicates:', error);
+      alert('An error occurred while processing duplicates. Please try again.');
+      setShowDuplicateModal(false);
+    }
+  };
+
+  // Actual upload function
+  const performBulkUpload = async (uploadPlan: Map<string, Map<DocType, File[]>>) => {
+    let totalFiles = 0;
+    let uploadedFiles = 0;
+    let errors: string[] = [];
+
+    // Count total files
+    for (const docTypeMap of uploadPlan.values()) {
+      for (const files of docTypeMap.values()) {
+        totalFiles += files.length;
+      }
+    }
+
+    console.log(`🚀 Starting bulk upload of ${totalFiles} files...`);
+
+    // Process each batch
+    for (const [batchNumber, docTypeMap] of uploadPlan.entries()) {
+      // Find the record for this batch
+      const record = data.find(r => String(r['Batch number']) === batchNumber);
+      if (!record) {
+        errors.push(`Batch ${batchNumber} not found in records`);
+        continue;
+      }
+
+      // Process each document type
+      for (const [docType, files] of docTypeMap.entries()) {
+        for (const file of files) {
+          try {
+            // Upload using local storage
+            if (localStorageServiceRef.current && appSettings.localStoragePath) {
+              await localStorageServiceRef.current.uploadFile(record, file, docType, appSettings.localStoragePath);
+            } else {
+              throw new Error('Local storage not configured');
+            }
+
+            uploadedFiles++;
+            console.log(`✅ Uploaded ${file.name} to batch ${batchNumber} (${uploadedFiles}/${totalFiles})`);
+
+          } catch (error) {
+            const errorMsg = `Failed to upload ${file.name} to batch ${batchNumber}: ${error instanceof Error ? error.message : 'Unknown error'}`;
+            errors.push(errorMsg);
+            console.error('❌', errorMsg);
+          }
+        }
+      }
+    }
+
+    // Show results
+    if (errors.length > 0) {
+      const message = `Upload completed with errors:\n- ${uploadedFiles} files uploaded successfully\n- ${errors.length} files failed\n\nErrors:\n${errors.join('\n')}`;
+      alert(message);
+    } else {
+      alert(`✅ Successfully uploaded ${uploadedFiles} file${uploadedFiles > 1 ? 's' : ''}!`);
+    }
+
+    // Refresh data to update counts
+    if (appSettings.apiKey && appSettings.baseId && appSettings.tableName) {
+      handleFetchData();
+    }
+  };
+
   // Calculate statistics for filtered data using batch completion
   const dataStats = useMemo(() => {
     const total = processedData.length;
@@ -494,7 +582,7 @@ const App: React.FC = () => {
     let missingCustomerInv = 0;
 
     const getUploadedCount = (batchNumber: string, docType: DocType): number => {
-      if (appSettings.storageMode === 'local' && localStorageServiceRef.current) {
+      if (localStorageServiceRef.current) {
         return localStorageServiceRef.current.getUploadedFileCount(batchNumber, docType);
       }
       return 0;
@@ -525,7 +613,7 @@ const App: React.FC = () => {
       missingSupplierInv, 
       missingCustomerInv 
     };
-  }, [processedData, appSettings.storageMode, localStorageServiceRef]);
+  }, [processedData, localStorageServiceRef]);
 
   return (
     <div className="min-h-screen text-gray-800 transition-colors duration-300">
@@ -541,10 +629,7 @@ const App: React.FC = () => {
         setSettings={setAppSettings}
         onFetchData={handleFetchData}
         onClose={() => setIsSettingsOpen(false)}
-        authState={authState}
-        onLogin={handleLogin}
-        onLogout={handleLogout}
-        onScanAndRebuild={appSettings.storageMode === 'local' ? handleScanAndRebuild : undefined}
+        onScanAndRebuild={handleScanAndRebuild}
       />
 
       <main className="p-4 sm:p-6 lg:p-8">
@@ -552,7 +637,7 @@ const App: React.FC = () => {
           <div className="bg-white shadow-md rounded-lg p-6">
             <h1 className="text-2xl font-bold mb-4 text-gray-900">FSC Report Dashboard</h1>
             <p className="text-gray-600 mb-6">
-              Connect to your Airtable base and OneDrive to view, manage, and organize your FSC documents.
+              Connect to your Airtable base to view, manage, and organize your FSC documents locally.
             </p>
             
             <FilterControls
@@ -614,20 +699,43 @@ const App: React.FC = () => {
             ) : error ? (
               <div className="text-center text-red-500 bg-red-100 p-4 rounded-lg">{error}</div>
             ) : (
-              <DataTable 
-                data={processedData} 
-                sortConfig={sortConfig} 
-                requestSort={requestSort}
-                expandedRecordId={expandedRecordId}
-                onToggleExpand={handleToggleExpand}
-                managedFiles={allManagedFiles}
-                fileHandlers={fileHandlers}
-                authState={authState}
-                oneDriveBasePath={appSettings.oneDriveBasePath}
-                oneDriveService={oneDriveServiceRef.current}
-                appSettings={appSettings}
-                localStorageService={localStorageServiceRef.current}
-              />
+              <>
+                <DataTable 
+                  data={processedData} 
+                  sortConfig={sortConfig} 
+                  requestSort={requestSort}
+                  expandedRecordId={expandedRecordId}
+                  onToggleExpand={handleToggleExpand}
+                  managedFiles={allManagedFiles}
+                  fileHandlers={fileHandlers}
+                  appSettings={appSettings}
+                  localStorageService={localStorageServiceRef.current}
+                  onBulkUpload={() => setShowBulkUploadModal(true)}
+                />
+                
+                {/* Bulk Upload Modal */}
+                <BulkUploadModal
+                  isOpen={showBulkUploadModal}
+                  onClose={() => setShowBulkUploadModal(false)}
+                  records={data}
+                  onBulkUpload={handleBulkUpload}
+                  appSettings={appSettings}
+                  localStorageService={localStorageServiceRef.current}
+                />
+
+                {/* Duplicate Resolution Modal */}
+                <DuplicateResolutionModal
+                  isOpen={showDuplicateModal}
+                  duplicates={detectedDuplicates}
+                  onResolve={handleDuplicateResolution}
+                  onCancel={() => {
+                    setShowDuplicateModal(false);
+                    setPendingUploadPlan(null);
+                    setDetectedDuplicates([]);
+                    setShowBulkUploadModal(true);
+                  }}
+                />
+              </>
             )}
           </div>
         </div>
