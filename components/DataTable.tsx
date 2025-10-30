@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { FscRecord, SortConfig, DocType, ManagedFile, AppSettings } from '../types';
-import { FolderKanban, ChevronsUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronUp, Upload, CheckCircle, AlertTriangle, RotateCw, Settings } from 'lucide-react';
+import { FolderKanban, ChevronsUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronUp, Upload, CheckCircle, AlertTriangle, RotateCw, Settings, FolderOpen, Link2 } from 'lucide-react';
 import { DocStatusIcons } from './DocStatusIcons';
 import { FileManagementRow } from './FileManagementRow';
 import { LocalStorageService } from '../services/localStorageService';
@@ -99,6 +99,7 @@ interface FileUploadCellProps {
   onFileAdd: (recordId: string, docType: DocType, file: File) => void;
   appSettings: AppSettings;
   localStorageService: LocalStorageService | null;
+  globalUploadMode: 'browse' | 'url';
 }
 
 const FileUploadCell: React.FC<FileUploadCellProps> = ({
@@ -107,11 +108,15 @@ const FileUploadCell: React.FC<FileUploadCellProps> = ({
   files,
   onFileAdd,
   appSettings,
-  localStorageService
+  localStorageService,
+  globalUploadMode
 }) => {
   const [uploading, setUploading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [uploadedCount, setUploadedCount] = useState(0);
+  const [showUrlInput, setShowUrlInput] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState('');
+  const [urlError, setUrlError] = useState('');
 
   // Load uploaded count on mount
   React.useEffect(() => {
@@ -156,38 +161,186 @@ const FileUploadCell: React.FC<FileUploadCellProps> = ({
     }
   };
 
+  const handleLoadFromUrl = async () => {
+    const url = pdfUrl.trim();
+    
+    if (!url) {
+      setUrlError('Please enter a URL');
+      return;
+    }
+
+    setUploading(true);
+    setStatus('idle');
+    setUrlError('');
+
+    try {
+      // Use local secure proxy server instead of third-party service
+      const proxyUrl = `http://localhost:3001/fetch-pdf?url=${encodeURIComponent(url)}`;
+      
+      const response = await fetch(proxyUrl);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(errorData.error || `Failed to fetch: ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      if (blob.size === 0) {
+        throw new Error('Downloaded file is empty');
+      }
+
+      // Generate filename
+      let filename = `${record['Batch number']}-${docType}-${Date.now()}.pdf`;
+      
+      const file = new File([blob], filename, { type: 'application/pdf' });
+      
+      // Add and upload
+      onFileAdd(record.id, docType, file);
+      
+      if (!localStorageService || !appSettings.localStoragePath) {
+        throw new Error('Local storage not configured');
+      }
+      
+      await localStorageService.uploadFile(record, file, docType, appSettings.localStoragePath);
+      
+      // Update count
+      const batchNumber = record['Batch number'];
+      if (batchNumber) {
+        const count = localStorageService.getUploadedFileCount(batchNumber, docType);
+        setUploadedCount(count);
+      }
+      
+      setStatus('success');
+      setPdfUrl('');
+      setShowUrlInput(false);
+      setTimeout(() => setStatus('idle'), 2000);
+    } catch (error) {
+      setStatus('error');
+      setUrlError(error instanceof Error ? error.message : 'Failed to load PDF');
+      setTimeout(() => setStatus('idle'), 3000);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleUploadClick = () => {
+    if (globalUploadMode === 'url') {
+      setShowUrlInput(true);
+    }
+    // If browse mode, the label will trigger the file input automatically
+  };
+
   const fileCount = uploadedCount;
   const hasFiles = fileCount > 0;
+
+  // URL Input Modal
+  if (showUrlInput && globalUploadMode === 'url') {
+    return (
+      <td className="px-4 py-4 text-center">
+        <div className="flex flex-col gap-2 min-w-[200px]">
+          <input
+            type="url"
+            value={pdfUrl}
+            onChange={(e) => {
+              setPdfUrl(e.target.value);
+              setUrlError('');
+            }}
+            placeholder="Paste PDF URL"
+            className="w-full px-2 py-1 text-xs border border-blue-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            disabled={uploading}
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                handleLoadFromUrl();
+              } else if (e.key === 'Escape') {
+                setShowUrlInput(false);
+                setPdfUrl('');
+                setUrlError('');
+              }
+            }}
+          />
+          <div className="flex gap-1 justify-center">
+            <button
+              onClick={handleLoadFromUrl}
+              disabled={uploading || !pdfUrl.trim()}
+              className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {uploading ? 'Loading...' : 'Load'}
+            </button>
+            <button
+              onClick={() => {
+                setShowUrlInput(false);
+                setPdfUrl('');
+                setUrlError('');
+              }}
+              disabled={uploading}
+              className="px-2 py-1 text-xs bg-gray-300 text-gray-700 rounded hover:bg-gray-400 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+          {urlError && (
+            <span className="text-xs text-red-600">{urlError}</span>
+          )}
+        </div>
+      </td>
+    );
+  }
 
   return (
     <td className="px-4 py-4 text-center">
       <div className="flex flex-col items-center gap-1">
-        <label className={`cursor-pointer inline-flex items-center justify-center px-3 py-1.5 rounded text-xs font-medium transition ${
-          uploading ? 'bg-blue-100 text-blue-700' :
-          status === 'success' ? 'bg-green-100 text-green-700' :
-          status === 'error' ? 'bg-red-100 text-red-700' :
-          hasFiles ? 'bg-green-50 text-green-700 hover:bg-green-100' :
-          'bg-gray-100 text-gray-700 hover:bg-gray-200'
-        }`}>
-          {uploading ? (
-            <><RotateCw className="h-3 w-3 mr-1 animate-spin" /> Uploading...</>
-          ) : status === 'success' ? (
-            <><CheckCircle className="h-3 w-3 mr-1" /> Uploaded</>
-          ) : status === 'error' ? (
-            <><AlertTriangle className="h-3 w-3 mr-1" /> Error</>
-          ) : hasFiles ? (
-            <><CheckCircle className="h-3 w-3 mr-1" /> {fileCount}</>
-          ) : (
-            <><Upload className="h-3 w-3 mr-1" /> Upload</>
-          )}
-          <input
-            type="file"
-            className="hidden"
-            onChange={handleFileChange}
-            accept=".pdf,.xlsx,.xls,.doc,.docx"
+        {globalUploadMode === 'browse' ? (
+          <label className={`cursor-pointer inline-flex items-center justify-center px-3 py-1.5 rounded text-xs font-medium transition ${
+            uploading ? 'bg-blue-100 text-blue-700' :
+            status === 'success' ? 'bg-green-100 text-green-700' :
+            status === 'error' ? 'bg-red-100 text-red-700' :
+            hasFiles ? 'bg-green-50 text-green-700 hover:bg-green-100' :
+            'bg-gray-100 text-gray-700 hover:bg-gray-200'
+          }`}>
+            {uploading ? (
+              <><RotateCw className="h-3 w-3 mr-1 animate-spin" /> Uploading...</>
+            ) : status === 'success' ? (
+              <><CheckCircle className="h-3 w-3 mr-1" /> Uploaded</>
+            ) : status === 'error' ? (
+              <><AlertTriangle className="h-3 w-3 mr-1" /> Error</>
+            ) : hasFiles ? (
+              <><CheckCircle className="h-3 w-3 mr-1" /> {fileCount}</>
+            ) : (
+              <><Upload className="h-3 w-3 mr-1" /> Upload</>
+            )}
+            <input
+              type="file"
+              className="hidden"
+              onChange={handleFileChange}
+              accept=".pdf,.xlsx,.xls,.doc,.docx"
+              disabled={uploading}
+            />
+          </label>
+        ) : (
+          <button
+            onClick={handleUploadClick}
             disabled={uploading}
-          />
-        </label>
+            className={`inline-flex items-center justify-center px-3 py-1.5 rounded text-xs font-medium transition ${
+              uploading ? 'bg-blue-100 text-blue-700' :
+              status === 'success' ? 'bg-green-100 text-green-700' :
+              status === 'error' ? 'bg-red-100 text-red-700' :
+              hasFiles ? 'bg-green-50 text-green-700 hover:bg-green-100' :
+              'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            {uploading ? (
+              <><RotateCw className="h-3 w-3 mr-1 animate-spin" /> Loading...</>
+            ) : status === 'success' ? (
+              <><CheckCircle className="h-3 w-3 mr-1" /> ✓</>
+            ) : status === 'error' ? (
+              <><AlertTriangle className="h-3 w-3 mr-1" /> Error</>
+            ) : hasFiles ? (
+              <><CheckCircle className="h-3 w-3 mr-1" /> {fileCount}</>
+            ) : (
+              <><Upload className="h-3 w-3 mr-1" /> Upload</>
+            )}
+          </button>
+        )}
       </div>
     </td>
   );
@@ -223,6 +376,7 @@ export const DataTable: React.FC<DataTableProps> = ({
   const [resizingColumn, setResizingColumn] = useState<ColumnId | null>(null);
   const [resizeStartX, setResizeStartX] = useState<number>(0);
   const [resizeStartWidth, setResizeStartWidth] = useState<number>(0);
+  const [globalUploadMode, setGlobalUploadMode] = useState<'browse' | 'url'>('browse');
 
   // Load column preferences on mount
   useEffect(() => {
@@ -412,23 +566,53 @@ export const DataTable: React.FC<DataTableProps> = ({
   return (
     <div className="overflow-x-auto">
       {/* Bulk Upload and Column Settings Buttons */}
-      <div className="flex justify-end gap-2 mb-2">
-        {onBulkUpload && (
+      <div className="flex justify-between items-center mb-2">
+        {/* Left side: Upload mode toggle */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-600 font-medium">Upload Mode:</span>
           <button
-            onClick={onBulkUpload}
-            className="flex items-center space-x-2 px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md transition"
+            onClick={() => setGlobalUploadMode('browse')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium transition ${
+              globalUploadMode === 'browse'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
           >
-            <Upload className="h-4 w-4" />
-            <span>Bulk Upload</span>
+            <FolderOpen className="h-4 w-4" />
+            Browse Files
           </button>
-        )}
-        <button
-          onClick={() => setShowColumnSettings(true)}
-          className="flex items-center space-x-2 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition"
-        >
-          <Settings className="h-4 w-4" />
-          <span>Customize Columns</span>
-        </button>
+          <button
+            onClick={() => setGlobalUploadMode('url')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium transition ${
+              globalUploadMode === 'url'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            <Link2 className="h-4 w-4" />
+            From URL
+          </button>
+        </div>
+
+        {/* Right side: Bulk Upload and Column Settings */}
+        <div className="flex gap-2">
+          {onBulkUpload && (
+            <button
+              onClick={onBulkUpload}
+              className="flex items-center space-x-2 px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md transition"
+            >
+              <Upload className="h-4 w-4" />
+              <span>Bulk Upload</span>
+            </button>
+          )}
+          <button
+            onClick={() => setShowColumnSettings(true)}
+            className="flex items-center space-x-2 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition"
+          >
+            <Settings className="h-4 w-4" />
+            <span>Customize Columns</span>
+          </button>
+        </div>
       </div>
 
       {/* Column Settings Modal */}
@@ -757,9 +941,8 @@ export const DataTable: React.FC<DataTableProps> = ({
                       files={managedFiles[record.id]?.[DocType.PO] || []}
                       onFileAdd={fileHandlers.add}
                       appSettings={appSettings}
-
                       localStorageService={localStorageService}
-
+                      globalUploadMode={globalUploadMode}
                     />
                   );
                 })()}
@@ -772,9 +955,8 @@ export const DataTable: React.FC<DataTableProps> = ({
                       files={managedFiles[record.id]?.[DocType.SO] || []}
                       onFileAdd={fileHandlers.add}
                       appSettings={appSettings}
-
                       localStorageService={localStorageService}
-
+                      globalUploadMode={globalUploadMode}
                     />
                   );
                 })()}
@@ -787,9 +969,8 @@ export const DataTable: React.FC<DataTableProps> = ({
                       files={managedFiles[record.id]?.[DocType.SupplierInvoice] || []}
                       onFileAdd={fileHandlers.add}
                       appSettings={appSettings}
-
                       localStorageService={localStorageService}
-
+                      globalUploadMode={globalUploadMode}
                     />
                   );
                 })()}
@@ -802,9 +983,8 @@ export const DataTable: React.FC<DataTableProps> = ({
                       files={managedFiles[record.id]?.[DocType.CustomerInvoice] || []}
                       onFileAdd={fileHandlers.add}
                       appSettings={appSettings}
-
                       localStorageService={localStorageService}
-
+                      globalUploadMode={globalUploadMode}
                     />
                   );
                 })()}
@@ -875,11 +1055,9 @@ export const DataTable: React.FC<DataTableProps> = ({
                         fileHandlers={fileHandlers}
                         colSpan={1} // Not applicable here, but required by prop
                         isMobile={true}
-
-
-
                         appSettings={appSettings}
                         localStorageService={localStorageService}
+                        globalUploadMode={globalUploadMode}
                     />
                 </div>
             )}

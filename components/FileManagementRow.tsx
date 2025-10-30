@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { FscRecord, ManagedFile, DocType, AppSettings } from '../types';
-import { UploadCloud, FileText as FileIcon, Download, RotateCw, Trash2, CheckCircle, AlertTriangle } from 'lucide-react';
+import { UploadCloud, FileText as FileIcon, Download, RotateCw, Trash2, CheckCircle, AlertTriangle, Link2, FolderOpen } from 'lucide-react';
 import { createZip } from '../services/zipService';
 import { LocalStorageService } from '../services/localStorageService';
 
@@ -17,6 +17,7 @@ interface FileManagementRowProps {
   isMobile?: boolean;
   appSettings: AppSettings;
   localStorageService: LocalStorageService | null;
+  globalUploadMode?: 'browse' | 'url';
 }
 
 const docTypes = [DocType.PO, DocType.SO, DocType.SupplierInvoice, DocType.CustomerInvoice];
@@ -40,10 +41,45 @@ export const FileManagementRow: React.FC<FileManagementRowProps> = ({
     colSpan, 
     isMobile,
     appSettings,
-    localStorageService
+    localStorageService,
+    globalUploadMode = 'browse'
 }) => {
   const [isZipping, setIsZipping] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>({ state: 'idle', message: '' });
+  const [uploadMode, setUploadMode] = useState<Record<DocType, 'browse' | 'url'>>({
+    [DocType.PO]: globalUploadMode,
+    [DocType.SO]: globalUploadMode,
+    [DocType.SupplierInvoice]: globalUploadMode,
+    [DocType.CustomerInvoice]: globalUploadMode,
+  });
+  const [pdfUrls, setPdfUrls] = useState<Record<DocType, string>>({
+    [DocType.PO]: '',
+    [DocType.SO]: '',
+    [DocType.SupplierInvoice]: '',
+    [DocType.CustomerInvoice]: '',
+  });
+  const [urlErrors, setUrlErrors] = useState<Record<DocType, string>>({
+    [DocType.PO]: '',
+    [DocType.SO]: '',
+    [DocType.SupplierInvoice]: '',
+    [DocType.CustomerInvoice]: '',
+  });
+  const [loadingUrls, setLoadingUrls] = useState<Record<DocType, boolean>>({
+    [DocType.PO]: false,
+    [DocType.SO]: false,
+    [DocType.SupplierInvoice]: false,
+    [DocType.CustomerInvoice]: false,
+  });
+
+  // Update local upload modes when global mode changes
+  React.useEffect(() => {
+    setUploadMode({
+      [DocType.PO]: globalUploadMode,
+      [DocType.SO]: globalUploadMode,
+      [DocType.SupplierInvoice]: globalUploadMode,
+      [DocType.CustomerInvoice]: globalUploadMode,
+    });
+  }, [globalUploadMode]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, docType: DocType) => {
     if (e.target.files && e.target.files[0]) {
@@ -53,6 +89,94 @@ export const FileManagementRow: React.FC<FileManagementRowProps> = ({
       
       // Auto-upload immediately after adding file
       await handleUploadSingleFile(file, docType);
+    }
+  };
+
+  const handleLoadFromUrl = async (docType: DocType) => {
+    const url = pdfUrls[docType].trim();
+    
+    if (!url) {
+      setUrlErrors(prev => ({ ...prev, [docType]: 'Please enter a URL' }));
+      return;
+    }
+
+    setLoadingUrls(prev => ({ ...prev, [docType]: true }));
+    setUrlErrors(prev => ({ ...prev, [docType]: '' }));
+
+    try {
+      // Use local secure proxy server instead of third-party service
+      const proxyUrl = `http://localhost:3001/fetch-pdf?url=${encodeURIComponent(url)}`;
+      
+      const response = await fetch(proxyUrl);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(errorData.error || `Failed to fetch: ${response.status}`);
+      }
+
+      // Get the blob
+      const blob = await response.blob();
+
+      // Verify it's a PDF or has reasonable size
+      if (blob.size === 0) {
+        throw new Error('Downloaded file is empty');
+      }
+
+      // Check if it's actually a PDF by checking the content type or blob type
+      const contentType = response.headers.get('content-type') || blob.type;
+      const isPdf = contentType.includes('pdf') || 
+                    contentType.includes('application/pdf') || 
+                    url.toLowerCase().includes('pdf');
+
+      // Generate a proper filename
+      let filename: string;
+      
+      // Try to get filename from Content-Disposition header
+      const contentDisposition = response.headers.get('content-disposition');
+      if (contentDisposition && contentDisposition.includes('filename=')) {
+        const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(contentDisposition);
+        if (matches && matches[1]) {
+          filename = matches[1].replace(/['"]/g, '');
+        } else {
+          // Generate from batch and doc type
+          filename = `${record['Batch number']}-${docType}-${Date.now()}.pdf`;
+        }
+      } else {
+        // Extract from URL path if possible
+        const urlPath = new URL(url).pathname;
+        const urlFilename = urlPath.split('/').pop();
+        
+        if (urlFilename && urlFilename.length > 0 && urlFilename !== '/' && !urlFilename.includes('?')) {
+          filename = urlFilename;
+        } else {
+          // Generate a meaningful filename from batch number and doc type
+          filename = `${record['Batch number']}-${docType}-${Date.now()}.pdf`;
+        }
+      }
+      
+      // Ensure it has .pdf extension
+      if (!filename.toLowerCase().endsWith('.pdf')) {
+        filename += '.pdf';
+      }
+      
+      // Create a File object from the blob with proper type
+      const file = new File([blob], filename, { type: 'application/pdf' });
+
+      // Add to file handlers and upload
+      fileHandlers.add(record.id, docType, file);
+      await handleUploadSingleFile(file, docType);
+      
+      // Clear the URL input
+      setPdfUrls(prev => ({ ...prev, [docType]: '' }));
+      
+      console.log(`✅ Successfully loaded PDF from URL: ${filename} (${(blob.size / 1024).toFixed(1)} KB)`);
+    } catch (error) {
+      console.error('Error loading PDF from URL:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load PDF from URL';
+      setUrlErrors(prev => ({ ...prev, [docType]: errorMessage }));
+      setUploadStatus({ state: 'error', message: `Failed to load from URL: ${errorMessage}` });
+    } finally {
+      setLoadingUrls(prev => ({ ...prev, [docType]: false }));
     }
   };
 
@@ -123,11 +247,61 @@ export const FileManagementRow: React.FC<FileManagementRowProps> = ({
               </div>
             ))}
 
-            <label htmlFor={`${docType}-${record.id}`} className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-4 cursor-pointer hover:bg-gray-100 transition">
-              <UploadCloud className="h-8 w-8 text-gray-400" />
-              <span className="mt-2 text-sm font-semibold text-gray-700">Add a file</span>
-              <input id={`${docType}-${record.id}`} type="file" className="hidden" onChange={(e) => handleFileChange(e, docType)} accept=".pdf,.xlsx,.xls,.doc,.docx" />
-            </label>
+            {/* Browse File Upload */}
+            {uploadMode[docType] === 'browse' && (
+              <label htmlFor={`${docType}-${record.id}`} className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-4 cursor-pointer hover:bg-gray-100 transition">
+                <UploadCloud className="h-8 w-8 text-gray-400" />
+                <span className="mt-2 text-sm font-semibold text-gray-700">Add a file</span>
+                <input id={`${docType}-${record.id}`} type="file" className="hidden" onChange={(e) => handleFileChange(e, docType)} accept=".pdf,.xlsx,.xls,.doc,.docx" />
+              </label>
+            )}
+
+            {/* URL Input */}
+            {uploadMode[docType] === 'url' && (
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={pdfUrls[docType]}
+                    onChange={(e) => {
+                      setPdfUrls(prev => ({ ...prev, [docType]: e.target.value }));
+                      setUrlErrors(prev => ({ ...prev, [docType]: '' }));
+                    }}
+                    placeholder="Enter PDF URL"
+                    className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    disabled={loadingUrls[docType]}
+                  />
+                  <button
+                    onClick={() => handleLoadFromUrl(docType)}
+                    disabled={loadingUrls[docType] || !pdfUrls[docType].trim()}
+                    className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition inline-flex items-center space-x-1 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                  >
+                    {loadingUrls[docType] ? (
+                      <>
+                        <RotateCw className="h-4 w-4 animate-spin" />
+                        <span>Loading...</span>
+                      </>
+                    ) : (
+                      <>
+                        <UploadCloud className="h-4 w-4" />
+                        <span>Load</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                
+                {urlErrors[docType] && (
+                  <div className="text-xs text-red-600 flex items-center gap-1">
+                    <AlertTriangle className="h-3 w-3" />
+                    <span>{urlErrors[docType]}</span>
+                  </div>
+                )}
+                
+                <p className="text-xs text-gray-500 italic">
+                  💡 Paste a direct PDF URL and click Load
+                </p>
+              </div>
+            )}
           </div>
         ))}
       </div>
