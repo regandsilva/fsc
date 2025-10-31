@@ -174,31 +174,19 @@ const FileUploadCell: React.FC<FileUploadCellProps> = ({
     setUrlError('');
 
     try {
-      // Try direct fetch first (will work if CORS is allowed)
-      let response;
-      let blob;
+      // Direct fetch only - no third-party proxies
+      const response = await fetch(url, { 
+        mode: 'cors',
+        headers: {
+          'Accept': 'application/pdf,*/*'
+        }
+      });
       
-      try {
-        response = await fetch(url, { mode: 'cors' });
-        if (response.ok) {
-          blob = await response.blob();
-        } else {
-          throw new Error('Direct fetch failed, trying proxy');
-        }
-      } catch (directError) {
-        // If direct fetch fails due to CORS, try using a public CORS proxy as fallback
-        // This uses allorigins.win which is public and free
-        console.log('Direct fetch failed, using CORS proxy...');
-        const corsProxy = 'https://api.allorigins.win/raw?url=';
-        const proxyUrl = corsProxy + encodeURIComponent(url);
-        
-        response = await fetch(proxyUrl);
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-          throw new Error(errorData.error || `Failed to fetch: ${response.status}`);
-        }
-        blob = await response.blob();
+      if (!response.ok) {
+        throw new Error(`Failed to fetch PDF: ${response.status} ${response.statusText}`);
       }
+
+      const blob = await response.blob();
 
       if (blob.size === 0) {
         throw new Error('Downloaded file is empty');
@@ -231,7 +219,8 @@ const FileUploadCell: React.FC<FileUploadCellProps> = ({
       setTimeout(() => setStatus('idle'), 2000);
     } catch (error) {
       setStatus('error');
-      setUrlError(error instanceof Error ? error.message : 'Failed to load PDF');
+      const errorMsg = error instanceof Error ? error.message : 'Failed to load PDF';
+      setUrlError(errorMsg + ' - URL must allow CORS or be accessible directly');
       setTimeout(() => setStatus('idle'), 3000);
     } finally {
       setUploading(false);

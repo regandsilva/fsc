@@ -104,30 +104,17 @@ export const FileManagementRow: React.FC<FileManagementRowProps> = ({
     setUrlErrors(prev => ({ ...prev, [docType]: '' }));
 
     try {
-      // Try direct fetch first (will work if CORS is allowed)
-      let response;
-      let blob;
+      // Direct fetch only - no third-party proxies
+      const response = await fetch(url, { 
+        mode: 'cors',
+        headers: { 'Accept': 'application/pdf,*/*' }
+      });
       
-      try {
-        response = await fetch(url, { mode: 'cors' });
-        if (response.ok) {
-          blob = await response.blob();
-        } else {
-          throw new Error('Direct fetch failed, trying proxy');
-        }
-      } catch (directError) {
-        // If direct fetch fails due to CORS, try using a public CORS proxy as fallback
-        console.log('Direct fetch failed, using CORS proxy...');
-        const corsProxy = 'https://api.allorigins.win/raw?url=';
-        const proxyUrl = corsProxy + encodeURIComponent(url);
-        
-        response = await fetch(proxyUrl);
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-          throw new Error(errorData.error || `Failed to fetch`);
-        }
-        blob = await response.blob();
+      if (!response.ok) {
+        throw new Error(`Failed to fetch PDF: ${response.status} ${response.statusText}`);
       }
+      
+      const blob = await response.blob();
 
       // Verify it's a PDF or has reasonable size
       if (blob.size === 0) {
@@ -184,9 +171,9 @@ export const FileManagementRow: React.FC<FileManagementRowProps> = ({
       console.log(`✅ Successfully loaded PDF from URL: ${filename} (${(blob.size / 1024).toFixed(1)} KB)`);
     } catch (error) {
       console.error('Error loading PDF from URL:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Failed to load PDF from URL';
-      setUrlErrors(prev => ({ ...prev, [docType]: errorMessage }));
-      setUploadStatus({ state: 'error', message: `Failed to load from URL: ${errorMessage}` });
+      const errorMsg = error instanceof Error ? error.message : 'Failed to load PDF from URL';
+      setUrlErrors(prev => ({ ...prev, [docType]: errorMsg + ' - URL must allow CORS or be accessible directly' }));
+      setUploadStatus({ state: 'error', message: `Failed to load from URL: ${errorMsg}` });
     } finally {
       setLoadingUrls(prev => ({ ...prev, [docType]: false }));
     }
