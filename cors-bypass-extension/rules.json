@@ -1,0 +1,34 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        {
+          "header": "Access-Control-Allow-Origin",
+          "operation": "set",
+          "value": "*"
+        },
+        {
+          "header": "Access-Control-Allow-Methods",
+          "operation": "set",
+          "value": "GET, POST, OPTIONS"
+        },
+        {
+          "header": "Access-Control-Allow-Headers",
+          "operation": "set",
+          "value": "Content-Type, Accept"
+        }
+      ]
+    },
+    "condition": {
+      "urlFilter": "*://go.cin7.com/*",
+      "resourceTypes": [
+        "xmlhttprequest",
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  }
+]

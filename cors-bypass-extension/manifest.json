@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "FSC Document Hub - CORS Bypass",
+  "version": "1.0.0",
+  "description": "Enables URL uploads from Cin7 by bypassing CORS restrictions for FSC Document Hub",
+  "permissions": [
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "declarativeNetRequestFeedback"
+  ],
+  "host_permissions": [
+    "https://go.cin7.com/*",
+    "https://regandsilva.github.io/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "cors_rules",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  }
+}
