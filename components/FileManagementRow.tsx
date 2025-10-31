@@ -104,18 +104,30 @@ export const FileManagementRow: React.FC<FileManagementRowProps> = ({
     setUrlErrors(prev => ({ ...prev, [docType]: '' }));
 
     try {
-      // Use local secure proxy server instead of third-party service
-      const proxyUrl = `http://localhost:3001/fetch-pdf?url=${encodeURIComponent(url)}`;
+      // Try direct fetch first (will work if CORS is allowed)
+      let response;
+      let blob;
       
-      const response = await fetch(proxyUrl);
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(errorData.error || `Failed to fetch: ${response.status}`);
+      try {
+        response = await fetch(url, { mode: 'cors' });
+        if (response.ok) {
+          blob = await response.blob();
+        } else {
+          throw new Error('Direct fetch failed, trying proxy');
+        }
+      } catch (directError) {
+        // If direct fetch fails due to CORS, try using a public CORS proxy as fallback
+        console.log('Direct fetch failed, using CORS proxy...');
+        const corsProxy = 'https://api.allorigins.win/raw?url=';
+        const proxyUrl = corsProxy + encodeURIComponent(url);
+        
+        response = await fetch(proxyUrl);
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+          throw new Error(errorData.error || `Failed to fetch`);
+        }
+        blob = await response.blob();
       }
-
-      // Get the blob
-      const blob = await response.blob();
 
       // Verify it's a PDF or has reasonable size
       if (blob.size === 0) {
